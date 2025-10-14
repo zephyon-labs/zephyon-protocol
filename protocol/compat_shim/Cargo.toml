@@ -1,0 +1,10 @@
+[package]
+name = "compat_shim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+toml_edit        = "=0.22.27"
+toml_parser      = "=1.0.2"
+proc-macro-crate = "=3.3.0"
+generic-array    = "=0.14.6"

@@ -1,0 +1,21 @@
+# Rust / Anchor
+target/
+**/target/
+**/*.rs.bk
+Cargo.lock      # optional in libs; keep if you prefer reproducible builds
+programs/*/target/
+**/*.so
+# Node / TS
+node_modules/
+dist/
+.build/
+.cache/
+# Editor
+.vscode/
+.idea/
+# OS
+.DS_Store
+Thumbs.db
+# Generated
+**/idl/*.json
+**/keys/*.json

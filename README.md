@@ -1,6 +1,9 @@
 # Zephyon Protocol (On-Chain Core)
 
-Zephyon Protocol is a policy-aware payment and staking engine on Solana.
+# ⚡ Zephyon Labs
+**Building AI-driven financial and human systems on Solana.**
+
+Zephyon Labs develops **Zephyon Protocol** (policy-aware staking & payment rails) and **Nova / Anima Protocol** (AI presence & behavior engine).  
 
 - Smart contract: `/programs/zephyon-protocol` (Anchor / Rust)
 - First instruction: `initialize` creates a state account on-chain and stores data.

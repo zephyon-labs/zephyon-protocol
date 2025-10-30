@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 
 // Temporary placeholder Program ID.
 // We will replace this with the real Program ID after first deploy.
-declare_id!("GJXMamA3otLDDpbfzSZPeNhvzDBdeL1QhafSveKvwL2W");
+declare_id!("4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx");
 
 #[program]
 pub mod zephyon_protocol {

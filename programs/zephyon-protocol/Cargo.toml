@@ -21,7 +21,9 @@ custom-panic = []
 
 
 [dependencies]
-anchor-lang = "0.32.1"
+anchor-lang = { git = "https://github.com/coral-xyz/anchor", features = ["init-if-needed"] }
+anchor-spl  = { git = "https://github.com/coral-xyz/anchor", package = "anchor-spl" }
+
 
 
 [lints.rust]

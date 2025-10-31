@@ -1,3 +1,5 @@
+
+import * as anchor from "@coral-xyz/anchor";
 import { Connection, PublicKey, Keypair } from "@solana/web3.js";
 import { AnchorProvider, Program, Idl, Wallet } from "@coral-xyz/anchor";
 import fs from "fs";
@@ -106,16 +108,17 @@ export async function initializeExample() {
   const program = getProgram();
   const provider = program.provider as AnchorProvider;
 
-  // We'll make a brand new account to act as `state`.
-  // If your program expects a PDA instead, we'll update this later.
+  // We'll create a brand new account to act as `state`.
+  // This matches the IDL: `state` must be writable + signer.
   const stateKp = Keypair.generate();
 
-  // TODO: Update this `data` argument once we inspect full IDL args.
-  // For now we'll leave it as a placeholder.
-  // e.g. .initialize(new BN(123)) or .initialize({ value: new BN(1) }) etc.
+  // This is the first value we want to store on-chain.
+  // It must be a u64, so we'll pass a normal JS number and Anchor
+  // will BN-encode it under the hood if the IDL says "u64".
+  const initialValue = 42; // <- You can change this later.
+
   const txSig = await program.methods
-    // @ts-expect-error placeholder until we know the actual arg shape
-    .initialize(/* data goes here */)
+    .initialize(new anchor.BN(initialValue))
     .accounts({
       state: stateKp.publicKey,
       signer: provider.wallet.publicKey,
@@ -123,17 +126,10 @@ export async function initializeExample() {
         "11111111111111111111111111111111"
       ),
     })
-    .signers([stateKp]) // provider wallet signs automatically too
+    .signers([stateKp]) // state account is also a signer per IDL
     .rpc();
 
   console.log("initialize tx signature:", txSig);
+  console.log("state account public key:", stateKp.publicKey.toBase58());
 }
 
-/**
- * If you want to run this directly with ts-node later:
- *
- *   import { initializeExample } from "./client";
- *   initializeExample().catch(console.error);
- *
- * That will try to send the initialize transaction to devnet.
- */

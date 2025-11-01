@@ -33,3 +33,9 @@ Instruction: `initialize` → creates a state account and stores data.
 [programs.devnet]
 zephyon_protocol = "4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx"
 
+## 2025-10-31 – Zephyon Protocol Online Confirmation
+
+- Program ID: 4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx  
+- State account: 5sLE6BcXYHhgk1uGpDtjtjd12P1NyN8LCosKR7XDKnHu  
+- Transaction signature: 3azKSk9Ry5ZKzmRiNyxdHmgUx4qTbSJ5AvQHBCTzGYtE9WM2uT8wCXzWps3pWTgrXcS43J3m4g9ehWQZvjexoc2Z  
+- Stored value confirmed: **42**

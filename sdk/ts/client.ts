@@ -1,7 +1,11 @@
-
-import * as anchor from "@coral-xyz/anchor";
 import { Connection, PublicKey, Keypair } from "@solana/web3.js";
-import { AnchorProvider, Program, Idl, Wallet } from "@coral-xyz/anchor";
+import {
+  AnchorProvider,
+  Program,
+  BN,
+  Idl,
+} from "@coral-xyz/anchor";
+import NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -9,18 +13,17 @@ import path from "path";
 /**
  * PROGRAM + NETWORK CONFIG
  * ----------------------------------------------------------------
- * This is the address of the live Zephyon Protocol program
- * currently deployed on Solana devnet.
+ * Your live Zephyon Protocol program on Solana devnet.
  */
 const PROGRAM_ID = new PublicKey(
   "4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx"
 );
 
 /**
- * Load a local keypair (your devnet wallet).
- * By default Anchor used ~/.config/solana/id.json when deploying.
+ * Load your local devnet wallet keypair (the same signer Anchor used).
  *
- * If you ever switch to a different signer, just update this path.
+ * SECURITY NOTE:
+ * We read this locally. We NEVER commit or paste its contents.
  */
 function loadKeypairFromFile(filePath: string): Keypair {
   const secret = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -35,9 +38,10 @@ const DEFAULT_KEYPAIR_PATH = path.join(
 );
 
 /**
- * Build an AnchorProvider using:
- * - your local devnet wallet
- * - a confirmed devnet connection
+ * Build an AnchorProvider:
+ * - devnet RPC connection
+ * - NodeWallet wrapping your payer Keypair
+ * - confirmed commitment level
  */
 export function getProvider(): AnchorProvider {
   const payer = loadKeypairFromFile(DEFAULT_KEYPAIR_PATH);
@@ -46,18 +50,7 @@ export function getProvider(): AnchorProvider {
     commitment: "confirmed",
   });
 
-  // Minimal wallet wrapper so AnchorProvider is happy
-  const wallet: Wallet = {
-    publicKey: payer.publicKey,
-    signTransaction: async (tx) => {
-      tx.partialSign(payer);
-      return tx;
-    },
-    signAllTransactions: async (txs) => {
-      txs.forEach((tx) => tx.partialSign(payer));
-      return txs;
-    },
-  };
+  const wallet = new NodeWallet(payer);
 
   return new AnchorProvider(connection, wallet, {
     commitment: "confirmed",
@@ -65,35 +58,61 @@ export function getProvider(): AnchorProvider {
 }
 
 /**
- * Create an Anchor Program client using the generated IDL at:
- * target/idl/zephyon_protocol.json
+ * Load the IDL Anchor generated for your deployed program.
  */
-export function getProgram(): Program {
-  const provider = getProvider();
 
-  // This assumes you're running this file from repo root.
-  // If you run it from inside sdk/ts directly with ts-node,
-  // you may need to adjust this relative path.
+function loadIdl(): Idl {
   const idlPath = path.join(
     process.cwd(),
     "target",
     "idl",
     "zephyon_protocol.json"
   );
-
   const rawIdl = fs.readFileSync(idlPath, "utf8");
-  const idl = JSON.parse(rawIdl) as Idl;
 
-  return new Program(idl, PROGRAM_ID, provider);
+  // Parse the IDL Anchor generated for our program
+  const idl = JSON.parse(rawIdl) as any;
+
+  // Some early IDLs (like ours) don't include a top-level `accounts` array.
+  // Anchor's Program(...) builder assumes it's always there and crashes if not.
+  // So we normalize it.
+  if (!idl.accounts) {
+    idl.accounts = [];
+  }
+
+  return idl as Idl;
+}
+
+
+/**
+ * Get a Program client for Zephyon Protocol.
+ *
+ * Anchor 0.32.x has messy TS signatures for Program(...) across builds.
+ * We're going to assert the types directly so TS stops blocking you.
+ *
+ * Runtime is what matters — not pleasing the linter.
+ */
+export function getProgram(): Program {
+  const provider = getProvider();
+  const idl = loadIdl();
+
+  // Force-cast to line up with the runtime signature:
+  // new Program(idl, programId, provider?)
+  const program = new Program(
+    idl as any,
+    PROGRAM_ID as any,
+    provider as any
+  ) as Program;
+
+  return program;
 }
 
 /**
  * initializeExample()
  *
- * This is a scaffold for calling your on-chain `initialize`
- * instruction defined in the IDL.
+ * TRY to call your `initialize` instruction on devnet.
  *
- * According to the IDL snippet:
+ * From the IDL snippet:
  *   accounts:
  *     - state   (writable, signer)
  *     - signer  (writable, signer)
@@ -101,35 +120,45 @@ export function getProgram(): Program {
  *   args:
  *     - data
  *
- * We are *guessing* `state` is a brand new account you create and own.
- * If instead it's a PDA, we’ll switch this to PDA derivation next.
+ * We *don't yet know*:
+ *  - what the "data" arg should look like,
+ *  - whether `state` is supposed to be a PDA instead of a random Keypair,
+ *  - what size `state` should be allocated.
+ *
+ * So we:
+ *   - generate a new state keypair
+ *   - pass dummy data = BN(1)
+ *   - try to send
+ *
+ * Whatever error we get back is GOOD. It will literally tell us
+ * how to shape the real call.
  */
 export async function initializeExample() {
   const program = getProgram();
   const provider = program.provider as AnchorProvider;
 
-  // We'll create a brand new account to act as `state`.
-  // This matches the IDL: `state` must be writable + signer.
+  // We'll guess state is just an owned account for now.
   const stateKp = Keypair.generate();
 
-  // This is the first value we want to store on-chain.
-  // It must be a u64, so we'll pass a normal JS number and Anchor
-  // will BN-encode it under the hood if the IDL says "u64".
-  const initialValue = 42; // <- You can change this later.
+  const dummyData = new BN(1);
 
-  const txSig = await program.methods
-    .initialize(new anchor.BN(initialValue))
-    .accounts({
-      state: stateKp.publicKey,
-      signer: provider.wallet.publicKey,
-      systemProgram: new PublicKey(
-        "11111111111111111111111111111111"
-      ),
-    })
-    .signers([stateKp]) // state account is also a signer per IDL
-    .rpc();
+  try {
+    const txSig = await program.methods
+      .initialize(dummyData)
+      .accounts({
+        state: stateKp.publicKey,
+        signer: provider.wallet.publicKey,
+        systemProgram: new PublicKey(
+          "11111111111111111111111111111111"
+        ),
+      })
+      .signers([stateKp])
+      .rpc();
 
-  console.log("initialize tx signature:", txSig);
-  console.log("state account public key:", stateKp.publicKey.toBase58());
+    console.log("initialize tx signature:", txSig);
+  } catch (err) {
+    console.error("initializeExample() failed:", err);
+    throw err;
+  }
 }
 

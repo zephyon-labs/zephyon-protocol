@@ -1,10 +1,21 @@
 {
   "compilerOptions": {
-    "types": ["mocha", "chai"],
-    "typeRoots": ["./node_modules/@types"],
-    "lib": ["es2015"],
+    "target": "es2020",
     "module": "commonjs",
-    "target": "es6",
-    "esModuleInterop": true
-  }
+
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+
+    "strict": false,
+
+    "types": ["node"],
+    "lib": ["es2020"],
+
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": [
+    "sdk/**/*.ts"
+  ]
 }
+

@@ -6,9 +6,9 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-zephyon_protocol = "4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx"
+zephyon-protocol = "4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx"
 [programs.devnet]
-zephyon_protocol = "4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx"
+zephyon-protocol = "4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx"
 [registry]
 url = "https://api.apr.dev"
 

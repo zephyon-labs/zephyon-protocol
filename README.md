@@ -19,5 +19,18 @@ Status (10/26/2025 America/Chicago):
 - Build currently blocked by Solana's SBF toolchain still targeting rustc 1.75.0-dev, while local toolchain is rustc 1.90.0
 
 Next Milestone:
-- Resolve SBF/rustc mismatch and produce `target/deploy/zephyon_protocol.so`
-- Deploy to devnet and log Program ID in docs/deployment.md
+Status (10/30/2025 America/Chicago):
+
+- Wallet funded on devnet
+- Anchor workspace initialized and wired to that wallet
+- Program deployed on Solana devnet
+- Program ID: `4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx`
+- IDL generated: `target/idl/zephyon_protocol.json`
+- Upgrade authority: controlled by Operator wallet
+- Repo tagged: `v0.2-devnet-genesis`
+
+Next Milestones:
+1. Build minimal TypeScript client (sdk/ts) using the generated IDL.
+2. Add first `initialize` call flow (state account init).
+3. Write first Anchor test that hits devnet and asserts success.
+4. Containerize environment for repeatable local onboarding.

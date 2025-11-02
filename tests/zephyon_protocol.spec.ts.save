@@ -1,0 +1,76 @@
+import * as anchor from "@coral-xyz/anchor";
+import { Keypair, PublicKey } from "@solana/web3.js";
+import fs from "fs";
+import os from "os";
+import path from "path";
+
+function loadKeypairFromFile(filePath: string): Keypair {
+  const secret = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return Keypair.fromSecretKey(Uint8Array.from(secret));
+}
+
+async function main() {
+  // 1. Load payer (same wallet you used to deploy)
+  const DEFAULT_KEYPAIR_PATH = path.join(
+    os.homedir(),
+    ".config",
+    "solana",
+    "id.json"
+  );
+  const payer = loadKeypairFromFile(DEFAULT_KEYPAIR_PATH);
+
+  // 2. Connect provider to devnet
+  const connection = new anchor.web3.Connection(
+    "https://api.devnet.solana.com",
+    { commitment: "confirmed" }
+  );
+
+  const wallet = new anchor.Wallet(payer);
+  const provider = new anchor.AnchorProvider(connection, wallet, {
+    commitment: "confirmed",
+  });
+
+  anchor.setProvider(provider);
+
+  // 3. Load IDL and program
+  const idlRaw = fs.readFileSync(
+    path.join(process.cwd(), "target", "idl", "zephyon_protocol.json"),
+    "utf8"
+  );
+  const idl = JSON.parse(idlRaw);
+
+  const PROGRAM_ID = new PublicKey(
+    "4u849yEmC4oRkBE2HcMCTYxuZuazPiqueps7XkCk16qx"
+  );
+
+  const program = new anchor.Program(
+    idl as any,
+    PROGRAM_ID as any,
+    provider as any
+  );
+
+  // 4. Prepare accounts and args for initialize(data: u64)
+  const stateKp = Keypair.generate();
+  const initialValue = new anchor.BN(777); // u64
+
+  console.log("Sending initialize...");
+  const txSig = await program.methods
+    .initialize(initialValue)
+    .accounts({
+      state: stateKp.publicKey,
+      signer: provider.wallet.publicKey,
+      systemProgram: new PublicKey(
+        "11111111111111111111111111111111"
+      ),
+    })
+    .signers([stateKp])
+    .rpc();
+
+  console.log("✅ initialize tx signature:", txSig);
+  console.log("✅ state account pubkey:", stateKp.publicKey.toBase58());
+}
+
+main().catch((err) => {
+  console.error("❌ Error running devnet initialize:", err);
+});
+

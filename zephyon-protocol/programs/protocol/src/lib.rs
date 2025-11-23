@@ -60,19 +60,44 @@ impl ProtocolState {
 }
 
 #[account]
-pub struct UserAccount {
-    /// User wallet that controls this account
+pub struct UserProfile {
+    /// Owner of this profile (wallet that registered)
     pub authority: Pubkey,
-    /// Total amount this user has deposited into Zephyon
-    pub deposited_amount: u64,
-    /// Bump seed for this UserAccount PDA
+
+    /// When this profile was created (unix timestamp)
+    pub joined_at: i64,
+
+    /// Total number of transactions this user has performed
+    pub tx_count: u64,
+
+    /// Total lamports (or smallest unit) sent by this user
+    pub total_sent: u64,
+
+    /// Total lamports received by this user
+    pub total_received: u64,
+
+    /// Simple 0–100 risk indicator for NovaGuard
+    pub risk_score: u8,
+
+    /// Bitflags for things like is_merchant, is_frozen, high_risk, etc.
+    pub flags: u8,
+
+    /// PDA bump
     pub bump: u8,
 }
 
-impl UserAccount {
-    // 32 (authority) + 8 (deposited_amount) + 1 (bump)
-    pub const LEN: usize = 32 + 8 + 1;
+impl UserProfile {
+    // 32 (authority)
+    // + 8 (joined_at)
+    // + 8 (tx_count)
+    // + 8 (total_sent)
+    // + 8 (total_received)
+    // + 1 (risk_score)
+    // + 1 (flags)
+    // + 1 (bump)
+    pub const LEN: usize = 32 + 8 + 8 + 8 + 8 + 1 + 1 + 1;
 }
+
 
 // =======================
 // Program Instructions
@@ -114,19 +139,30 @@ pub mod protocol {
 
     /// Register a new user in the Zephyon Protocol by creating their PDA account.
     pub fn register_user(ctx: Context<RegisterUser>) -> Result<()> {
-        let user_account = &mut ctx.accounts.user_account;
+        // Guardrail: protocol_state must point to this treasury
+    require_keys_eq!(
+        ctx.accounts.protocol_state.treasury,
+        ctx.accounts.treasury.key(),
+        ZephyonError::InvalidTreasuryPda
+    );
 
-        // Store who owns this account
-        user_account.authority = ctx.accounts.authority.key();
+    let user_profile = &mut ctx.accounts.user_profile;
+    let authority = &ctx.accounts.authority;
 
-        // Start with zero balance
-        user_account.deposited_amount = 0;
+    let clock = Clock::get()?;
 
-        // Store bump for PDA re-derivation
-        user_account.bump = ctx.bumps.user_account;
+    user_profile.authority = authority.key();
+    user_profile.joined_at = clock.unix_timestamp;
+    user_profile.tx_count = 0;
+    user_profile.total_sent = 0;
+    user_profile.total_received = 0;
+    user_profile.risk_score = 0;
+    user_profile.flags = 0;
+    user_profile.bump = ctx.bumps.user_profile;
 
-        Ok(())
-    }
+    Ok(())
+}
+
 }
 
 // =======================
@@ -182,22 +218,42 @@ pub struct InitializeProtocol<'info> {
 
 #[derive(Accounts)]
 pub struct RegisterUser<'info> {
-    // PDA for the user's program-owned account
+    /// PDA for the user's profile
     #[account(
         init,
-        seeds = [b"user", authority.key().as_ref()],
-        bump,
         payer = authority,
-        space = 8 + UserAccount::LEN
+        space = 8 + UserProfile::LEN,
+        seeds = [b"user_profile", authority.key().as_ref()],
+        bump,
     )]
-    pub user_account: Account<'info, UserAccount>,
+    pub user_profile: Account<'info, UserProfile>,
+
+    /// Read-only protocol state (must be the canonical PDA)
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// Read-only treasury (must be the canonical PDA)
+    #[account(
+        seeds = [b"zephyon_treasury"],
+        bump = treasury.bump,
+    )]
+    pub treasury: Account<'info, Treasury>,
 
     /// The wallet registering as a Zephyon user
     #[account(mut)]
     pub authority: Signer<'info>,
 
+    /// System program
     pub system_program: Program<'info, System>,
 }
+
+
+
+
+
 
 
 

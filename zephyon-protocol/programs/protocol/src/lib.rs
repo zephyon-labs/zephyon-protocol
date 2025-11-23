@@ -23,6 +23,10 @@ pub enum ZephyonError {
 
     #[msg("Insufficient funds")]
     InsufficientFunds,
+
+    #[msg("Unauthorized user")]
+    Unauthorized,
+
 }
 
 // =======================
@@ -84,6 +88,10 @@ pub struct UserProfile {
 
     /// PDA bump
     pub bump: u8,
+    pub deposit_count: u64,
+    pub total_deposited: u64,
+    pub last_deposit_at: i64,
+
 }
 
 impl UserProfile {
@@ -136,7 +144,84 @@ pub mod protocol {
 
         Ok(())
     }
-    // TODO(core09): add `Deposit` context + `deposit(amount: u64)` handler here (SOL transfer + counters + event)
+    // ===========================
+// Core09 — Deposit Flow
+// ===========================
+
+use anchor_lang::system_program::{self, Transfer};
+
+#[event]
+pub struct DepositMade {
+    pub user: Pubkey,
+    pub amount: u64,
+    pub new_deposit_count: u64,
+    pub new_total_deposited: u64,
+    pub ts: i64,
+}
+
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    // Protocol must point to the correct treasury (Core08 guardrail)
+    #[account(
+        has_one = treasury @ ZephyonError::InvalidTreasuryPda
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// CHECK: treasury is lamport-only PDA
+    #[account(mut)]
+    pub treasury: AccountInfo<'info>,
+
+    // User profile PDA belonging to signer
+    #[account(
+        mut,
+        seeds = [b"user_profile", protocol_state.key().as_ref(), user.key().as_ref()],
+        bump = user_profile.bump,
+        constraint = user_profile.authority == user.key() @ ZephyonError::Unauthorized
+    )]
+    pub user_profile: Account<'info, UserProfile>,
+
+    /// User paying the deposit
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+    require!(amount > 0, ZephyonError::InsufficientFunds); // or create ZeroAmount if you prefer
+
+    // 1. Transfer SOL from user → treasury
+    let ix = Transfer {
+        from: ctx.accounts.user.to_account_info(),
+        to: ctx.accounts.treasury.to_account_info(),
+    };
+    let cpi_ctx = CpiContext::new(ctx.accounts.system_program.to_account_info(), ix);
+    system_program::transfer(cpi_ctx, amount)?;
+
+    // 2. Update counters
+    let profile = &mut ctx.accounts.user_profile;
+    profile.deposit_count = profile
+        .deposit_count
+        .checked_add(1)
+        .ok_or(ZephyonError::MathOverflow)?;
+    profile.total_deposited = profile
+        .total_deposited
+        .checked_add(amount)
+        .ok_or(ZephyonError::MathOverflow)?;
+    profile.last_deposit_at = Clock::get()?.unix_timestamp;
+
+    // 3. Emit deposit event
+    emit!(DepositMade {
+        user: ctx.accounts.user.key(),
+        amount,
+        new_deposit_count: profile.deposit_count,
+        new_total_deposited: profile.total_deposited,
+        ts: profile.last_deposit_at,
+    });
+
+    Ok(())
+}
+
 
     /// Register a new user in the Zephyon Protocol by creating their PDA account.
     pub fn register_user(ctx: Context<RegisterUser>) -> Result<()> {

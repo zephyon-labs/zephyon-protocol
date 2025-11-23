@@ -136,6 +136,7 @@ pub mod protocol {
 
         Ok(())
     }
+    // TODO(core09): add `Deposit` context + `deposit(amount: u64)` handler here (SOL transfer + counters + event)
 
     /// Register a new user in the Zephyon Protocol by creating their PDA account.
     pub fn register_user(ctx: Context<RegisterUser>) -> Result<()> {
@@ -218,6 +219,7 @@ pub struct InitializeProtocol<'info> {
 
 #[derive(Accounts)]
 pub struct RegisterUser<'info> {
+
     /// PDA for the user's profile
     #[account(
         init,

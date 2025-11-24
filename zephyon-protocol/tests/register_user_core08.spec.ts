@@ -9,10 +9,7 @@ describe("register_user", () => {
 
   const program = anchor.workspace.Protocol as Program<Protocol>;
 
-  // We'll use a fresh wallet keypair to simulate a new user.
-  const user = anchor.web3.Keypair.generate();
-
-  // Canonical PDAs for protocol_state and treasury
+  // Canonical PDAs for protocol_state and treasury (match lib.rs)
   const [treasuryPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("zephyon_treasury")],
     program.programId
@@ -22,24 +19,36 @@ describe("register_user", () => {
     program.programId
   );
 
-  // Helper to initialize the foundation exactly once
+  // Helper: derive user_profile PDA with Option-A seeds
+  function deriveUserProfilePda(protocolState: PublicKey, userPk: PublicKey) {
+    return PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("user_profile"),
+        protocolState.toBuffer(),
+        userPk.toBuffer(),
+      ],
+      program.programId
+    );
+  }
+
+  // Fresh user wallet for this spec
+  const user = anchor.web3.Keypair.generate();
+
+  // Initialize treasury + protocol once (idempotent)
   async function initFoundationOnce() {
-    // Try initialize_treasury (will succeed first time, fail on duplicate)
     try {
       await program.methods
         .initializeTreasury()
         .accounts({
           treasury: treasuryPda,
-          authority: provider.wallet.publicKey,
+          authority: provider.wallet.publicKey, // must match PROTOCOL_AUTHORITY
           systemProgram: SystemProgram.programId,
         })
-        // Provider signs automatically
         .rpc();
-    } catch (e) {
-      // ignore "already in use"
+    } catch (_) {
+      // already exists
     }
 
-    // Try initialize_protocol (will succeed first time, fail on duplicate)
     try {
       await program.methods
         .initializeProtocol()
@@ -50,88 +59,61 @@ describe("register_user", () => {
           systemProgram: SystemProgram.programId,
         })
         .rpc();
-    } catch (e) {
-      // ignore "already in use"
+    } catch (_) {
+      // already exists
     }
   }
 
   it("creates a new UserProfile PDA for the user", async () => {
-    // Fund the user wallet for rent
+    // fund fresh user
     const sig = await provider.connection.requestAirdrop(
       user.publicKey,
       2 * LAMPORTS_PER_SOL
     );
     await provider.connection.confirmTransaction(sig);
 
-    // Ensure protocol_state + treasury exist
+    // bring up foundation
     await initFoundationOnce();
 
-    // Derive the UserProfile PDA using the same seeds as in lib.rs
-    const [userProfilePda, bump] = PublicKey.findProgramAddressSync(
-      [Buffer.from("user_profile"), user.publicKey.toBuffer()],
-      program.programId
+    // derive profile PDA (Option A seeds)
+    const [userProfilePda, bump] = deriveUserProfilePda(
+      protocolStatePda,
+      user.publicKey
     );
 
-    // Call the register_user instruction (now requires protocol_state + treasury)
+    // register user (authority=user)
     await program.methods
       .registerUser()
       .accounts({
-        userProfile: userProfilePda,
         protocolState: protocolStatePda,
         treasury: treasuryPda,
-        authority: user.publicKey,
+        userProfile: userProfilePda,
+        authority: user.publicKey, // <-- IMPORTANT name
         systemProgram: SystemProgram.programId,
       })
-      .signers([user])
+      .signers([user]) // <-- user must sign
       .rpc();
 
-    // Fetch the on-chain UserProfile account
-    const userProfile = await program.account.userProfile.fetch(userProfilePda);
+    // fetch + assert
+    const up: any = await program.account.userProfile.fetch(userProfilePda);
 
-    console.log("UserProfile:", userProfile);
-
-    // Authority matches
-    if (!userProfile.authority.equals(user.publicKey)) {
-      throw new Error("authority mismatch on UserProfile");
-    }
-
-    // Joined_at is non-zero
-    if (userProfile.joinedAt.toNumber() === 0) {
-      throw new Error("joined_at was not set");
-    }
-
-    // Initial stats
-    if (!userProfile.txCount.eq(new anchor.BN(0))) {
-      throw new Error("tx_count should be 0 on init");
-    }
-    if (!userProfile.totalSent.eq(new anchor.BN(0))) {
-      throw new Error("total_sent should be 0 on init");
-    }
-    if (!userProfile.totalReceived.eq(new anchor.BN(0))) {
-      throw new Error("total_received should be 0 on init");
-    }
-
-    // Initial risk + flags + bump
-    if (userProfile.riskScore !== 0) {
-      throw new Error("risk_score should default to 0");
-    }
-    if (userProfile.flags !== 0) {
-      throw new Error("flags should default to 0");
-    }
-    if (userProfile.bump !== bump) {
-      throw new Error("bump doesn't match PDA bump");
-    }
+    if (!up.authority.equals(user.publicKey)) throw new Error("authority mismatch");
+    if (Number(up.joinedAt) === 0) throw new Error("joined_at not set");
+    if (!up.txCount.eq(new anchor.BN(0))) throw new Error("tx_count != 0");
+    if (!up.totalSent.eq(new anchor.BN(0))) throw new Error("total_sent != 0");
+    if (!up.totalReceived.eq(new anchor.BN(0))) throw new Error("total_received != 0");
+    if (up.riskScore !== 0) throw new Error("risk_score != 0");
+    if (up.flags !== 0) throw new Error("flags != 0");
+    if (up.bump !== bump) throw new Error("bump mismatch");
   });
 
   it("rejects double registration for the same user", async () => {
-    // Use the same PDA and same user as in the first test.
-    const [userProfilePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("user_profile"), user.publicKey.toBuffer()],
-      program.programId
+    const [userProfilePda] = deriveUserProfilePda(
+      protocolStatePda,
+      user.publicKey
     );
 
     let threw = false;
-
     try {
       await program.methods
         .registerUser()
@@ -148,10 +130,8 @@ describe("register_user", () => {
       threw = true;
       console.log("Expected double registration error:", err);
     }
-
-    if (!threw) {
-      throw new Error("Expected double registration to fail, but it succeeded.");
-    }
+    if (!threw) throw new Error("Expected double registration to fail.");
   });
 });
+
 

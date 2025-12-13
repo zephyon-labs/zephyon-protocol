@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-protocol = "3NCZzyVQXxEs8ncAVS1fwm5t25Vnhkzctfb7XkEnyDtD"
+protocol = "DsXi8h54n4Ma3c3wjwg5caESLvic33RLbfjTC1Y1Aqk1"
 
 [registry]
 url = "https://api.apr.dev"
@@ -16,4 +16,18 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+# Compile TS tests -> JS (CJS), then run mocha on the compiled JS
+test = "node ./node_modules/typescript/bin/tsc -p tsconfig.mocha.json && node ./node_modules/mocha/bin/_mocha -t 1000000 \"dist-tests/**/*.spec.js\""
+
+
+
+[test]
+startup_wait = 30000
+shutdown_wait = 2000
+upgradeable = false
+
+[test.validator]
+bind_address = "0.0.0.0"
+url = "http://127.0.0.1:8899"
+ledger = ".anchor/test-ledger"
+rpc_port = 8899

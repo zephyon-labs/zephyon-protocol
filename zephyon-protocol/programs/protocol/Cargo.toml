@@ -14,7 +14,8 @@ cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build"]
+# 🔴 add anchor-spl/idl-build here:
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-debug = []
 custom-heap = []
 custom-panic = []
@@ -22,9 +23,11 @@ custom-panic = []
 
 [dependencies]
 anchor-lang = "0.32.1"
-solana-pubkey = { version = "=2.2.1", default-features = false }
-
+anchor-spl  = { version = "0.32.1", features = ["token", "associated_token"] }
 
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+
+

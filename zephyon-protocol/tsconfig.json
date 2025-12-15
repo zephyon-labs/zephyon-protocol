@@ -3,18 +3,12 @@
     "target": "ES2020",
     "module": "CommonJS",
     "moduleResolution": "Node",
-    "strict": false,
     "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "skipLibCheck": true,
+    "strict": true,
     "types": ["node", "mocha"],
-    "baseUrl": ".",
-    "paths": {
-      "*": ["*", "tests/*"]
-    }
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "outDir": "dist-tests"
   },
-  "include": ["tests/**/*.ts", "mocha.setup.cjs", ".mocharc.cjs"]
+  "include": ["tests/**/*.ts"]
 }
-
-
-

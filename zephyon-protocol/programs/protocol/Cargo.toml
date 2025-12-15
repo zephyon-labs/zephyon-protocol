@@ -1,7 +1,6 @@
 [package]
 name = "protocol"
 version = "0.1.0"
-description = "Created with Anchor"
 edition = "2021"
 
 [lib]
@@ -9,25 +8,13 @@ crate-type = ["cdylib", "lib"]
 name = "protocol"
 
 [features]
-default = []
-cpi = ["no-entrypoint"]
 no-entrypoint = []
-no-idl = []
-no-log-ix-name = []
-# 🔴 add anchor-spl/idl-build here:
-idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
-anchor-debug = []
-custom-heap = []
-custom-panic = []
-
+idl-build = ["anchor-lang/idl-build"]
+default = []
 
 [dependencies]
 anchor-lang = "0.32.1"
-anchor-spl  = { version = "0.32.1", features = ["token", "associated_token"] }
 
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
 
 
 

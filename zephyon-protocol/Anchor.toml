@@ -1,11 +1,14 @@
 [workspace]
-members = [ "programs/protocol" ]
+members = ["programs/protocol"]
+
+[build]
+use_docker = false
 
 [programs.localnet]
 protocol = "C3irtmDDybjBXrYYh1mFj9eBVRhKSeA6JX356NrVThyo"
 
 [provider]
-cluster = "Localnet"
+cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
@@ -13,3 +16,4 @@ test = "yarn test"
 
 [test.validator]
 bind_address = "127.0.0.1"
+

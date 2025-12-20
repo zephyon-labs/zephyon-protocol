@@ -529,16 +529,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "compat_shim"
-version = "0.1.0"
-dependencies = [
- "generic-array",
- "proc-macro-crate 3.3.0",
- "toml_edit",
- "toml_parser",
-]
-
-[[package]]
 name = "console_error_panic_hook"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2808,15 +2798,6 @@ dependencies = [
  "serde_spanned",
  "toml_datetime",
  "toml_write",
- "winnow",
-]
-
-[[package]]
-name = "toml_parser"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b551886f449aa90d4fe2bdaa9f4a2577ad2dde302c61ecf262d80b116db95c10"
-dependencies = [
  "winnow",
 ]
 

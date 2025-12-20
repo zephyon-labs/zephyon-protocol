@@ -1,4 +1,4 @@
-pub mod receipt;
+pub mod treasury;
 
-pub use receipt::{Receipt, ReceiptCreated, ReceiptV2Ext};
+
 

@@ -1,5 +1,18 @@
+#![allow(clippy::result_large_err)]
+
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount, Mint};
+
+// Anchor IDL/client-account codegen expects this alias to exist.
+// Without it you get "__client_accounts_* not found" and #[program] goes red.
+extern crate self as __client_accounts_protocol;
+
+pub mod state;
+pub mod instructions;
+
+// Re-export so Context<InitializeTreasury> etc can be referenced directly
+pub use instructions::*;
+
+use state::treasury::Treasury;
 
 declare_id!("C3irtmDDybjBXrYYh1mFj9eBVRhKSeA6JX356NrVThyo");
 
@@ -8,40 +21,23 @@ pub mod protocol {
     use super::*;
 
     pub fn initialize_treasury(ctx: Context<InitializeTreasury>) -> Result<()> {
-        let bump: u8 = ctx.bumps.treasury;
-        let treasury = &mut ctx.accounts.treasury;
-        treasury.authority = ctx.accounts.authority.key();
-        treasury.bump = bump;
+        let t = &mut ctx.accounts.treasury;
+        t.authority = ctx.accounts.authority.key();
+        t.bump = ctx.bumps.treasury;
         Ok(())
+    }
+
+    pub fn deposit_spl(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
+        instructions::spl_deposit::handler(ctx, amount)
     }
 }
 
-#[derive(Accounts)]
-pub struct InitializeTreasury<'info> {
-    #[account(mut)]
-    pub authority: Signer<'info>,
 
-    #[account(
-        init,
-        payer = authority,
-        seeds = [b"treasury"],
-        bump,
-        space = 8 + 32 + 1
-    )]
-    pub treasury: Account<'info, Treasury>,
 
-    pub system_program: Program<'info, System>,
-}
 
-#[account]
-pub struct Treasury {
-    pub authority: Pubkey,
-    pub bump: u8,
-}
 
-#[error_code]
-pub enum ErrorCode {
-    #[msg("PDA bump not found")]
-    BumpMissing,
-}
+
+
+
+
 

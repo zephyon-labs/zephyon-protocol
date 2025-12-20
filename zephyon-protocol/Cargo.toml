@@ -1,3 +1,9 @@
+[workspace]
+members = [
+  "programs/protocol"
+]
+resolver = "2"
+
 [profile.release]
 overflow-checks = true
 lto = "fat"
@@ -7,21 +13,4 @@ codegen-units = 1
 opt-level = 3
 incremental = false
 codegen-units = 1
-
-[workspace]
-members = [
-  "programs/protocol",
-  "compat_shim",
-]
-resolver = "2"
-
-[workspace.dependencies]
-# your existing workspace deps (keep only one of each key)
-toml_edit        = "0.22.27"
-toml_parser      = "1.0.2"
-proc-macro-crate = "3.3.0"
-generic-array    = "0.14.6"
-
-# Anchor deps — one copy only
-anchor-lang = "0.32.1"
-anchor-spl  = { version = "0.32.1", features = ["token", "associated_token"] }
+ 

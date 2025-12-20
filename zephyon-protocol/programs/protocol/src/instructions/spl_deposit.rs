@@ -1,130 +1,91 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Mint, Transfer as SplTransfer};
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token::{self, Mint, Token, TokenAccount, Transfer},
+};
 
-use crate::{ProtocolState, UserProfile, Receipt, ReceiptV2Ext, ZephyonError};
-use crate::state::receipt::ReceiptCreated;
+use crate::state::treasury::Treasury;
+
+#[event]
+pub struct SplDepositEvent {
+    pub user: Pubkey,
+    pub mint: Pubkey,
+    pub amount: u64,
+    pub treasury: Pubkey,
+    pub treasury_ata: Pubkey,
+}
 
 #[derive(Accounts)]
 pub struct SplDeposit<'info> {
-    // — protocol graph —
-    #[account(has_one = treasury @ ZephyonError::InvalidTreasuryPda)]
-    pub protocol_state: Account<'info, ProtocolState>,
-
-    /// CHECK: PDA owner of the treasury ATA (off-curve)
-    #[account(
-        mut,
-        seeds = [b"zephyon_treasury"],
-        bump
-    )]
-    pub treasury: AccountInfo<'info>,
-
-    // — user profile —
-    #[account(
-        mut,
-        seeds = [
-            b"user_profile",
-            protocol_state.key().as_ref(),
-            user.key().as_ref()
-        ],
-        bump = user_profile.bump,
-        constraint = user_profile.authority == user.key() @ ZephyonError::Unauthorized
-    )]
-    pub user_profile: Account<'info, UserProfile>,
-
-    // — receipt (PRE-increment) —
-    #[account(
-        init,
-        payer = user,
-        space = Receipt::SPACE,
-        seeds = [
-            b"receipt",
-            user_profile.key().as_ref(),
-            &user_profile.tx_count.to_le_bytes()
-        ],
-        bump
-    )]
-    pub receipt: Account<'info, Receipt>,
-
-    // — SPL stack —
-    #[account(mut)]
-    pub mint: Account<'info, Mint>,
-
-    #[account(mut, constraint = user_token.mint == mint.key())]
-    pub user_token: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = treasury_token.mint == mint.key(),
-        // treasury_token.owner MUST be the treasury PDA (off-curve)
-        constraint = treasury_token.owner == treasury.key()
-    )]
-    pub treasury_token: Account<'info, TokenAccount>,
-
-    // — signer & programs —
+    /// User paying the tokens
     #[account(mut)]
     pub user: Signer<'info>,
 
+    /// Treasury PDA (must already exist from initialize_treasury)
+    #[account(
+        mut,
+        seeds = [b"treasury"],
+        bump
+    )]
+    pub treasury: Account<'info, Treasury>,
+
+    /// SPL mint being deposited (e.g., USDC)
+    pub mint: Account<'info, Mint>,
+
+    /// User's ATA for this mint
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = user
+    )]
+    pub user_ata: Account<'info, TokenAccount>,
+
+    /// Treasury's ATA for this mint (created if missing)
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = mint,
+        associated_token::authority = treasury
+    )]
+    pub treasury_ata: Account<'info, TokenAccount>,
+
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
 }
 
-pub fn handler(ctx: Context<SplDeposit>, amount_tokens: u64) -> Result<()> {
-    require!(amount_tokens > 0, ZephyonError::InsufficientFunds);
+pub fn handler(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
+    require!(amount > 0, ZephyonError::InvalidAmount);
 
-    // 1) token transfer: user -> treasury ATA
-    let cpi_accounts = SplTransfer {
-        from: ctx.accounts.user_token.to_account_info(),
-        to:   ctx.accounts.treasury_token.to_account_info(),
+    // Transfer from user ATA -> treasury ATA
+    let cpi_accounts = Transfer {
+        from: ctx.accounts.user_ata.to_account_info(),
+        to: ctx.accounts.treasury_ata.to_account_info(),
         authority: ctx.accounts.user.to_account_info(),
     };
+
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-    token::transfer(cpi_ctx, amount_tokens)?;
+    token::transfer(cpi_ctx, amount)?;
 
-    // 2) update profile
-    let p = &mut ctx.accounts.user_profile;
-    p.deposit_count = p.deposit_count.saturating_add(1);
-    p.total_deposited = p
-        .total_deposited
-        .checked_add(amount_tokens)
-        .ok_or(ZephyonError::MathOverflow)?;
-    p.last_deposit_at = Clock::get()?.unix_timestamp;
-
-    // 3) write receipt snapshot (PRE-increment)
-    let pre_balance = p
-        .total_deposited
-        .checked_sub(amount_tokens)
-        .ok_or(ZephyonError::MathOverflow)?;
-    let r = &mut ctx.accounts.receipt;
-    r.user         = p.key();                 // store user_profile PDA (canonical)
-    r.direction    = Receipt::DIR_DEPOSIT;
-    r.asset_kind   = Receipt::ASSET_SPL;
-    r.mint         = ctx.accounts.mint.key();
-    r.amount       = amount_tokens;
-    r.fee          = 0;
-    r.pre_balance  = pre_balance;
-    r.post_balance = p.total_deposited;
-    r.ts           = p.last_deposit_at;
-    r.tx_count     = p.tx_count;
-    r.bump         = ctx.bumps.receipt;
-    r.v2           = ReceiptV2Ext::spl(ctx.accounts.mint.key());
-
-    emit!(ReceiptCreated {
-        user:        r.user,
-        direction:   r.direction,
-        asset_kind:  r.asset_kind,
-        mint:        r.mint,
-        amount:      r.amount,
-        fee:         r.fee,
-        pre_balance: r.pre_balance,
-        post_balance:r.post_balance,
-        ts:          r.ts,
-        tx_count:    r.tx_count,
+    emit!(SplDepositEvent {
+        user: ctx.accounts.user.key(),
+        mint: ctx.accounts.mint.key(),
+        amount,
+        treasury: ctx.accounts.treasury.key(),
+        treasury_ata: ctx.accounts.treasury_ata.key(),
     });
 
-    // 4) bump tx_count AFTER receipt
-    p.tx_count = p.tx_count.saturating_add(1);
     Ok(())
 }
+
+#[error_code]
+pub enum ZephyonError {
+    #[msg("Amount must be greater than 0")]
+    InvalidAmount,
+}
+
+
 
 
 

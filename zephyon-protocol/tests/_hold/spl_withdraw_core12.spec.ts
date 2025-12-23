@@ -9,7 +9,7 @@ import {
   deriveUserProfilePdaV3,
   deriveReceiptPdaByUserProfile,
   setupMintAndAtas,
-} from "./_helpers";
+} from "../_helpers";
 
 describe("Core12 — SPL withdraw", () => {
   const provider = anchor.AnchorProvider.env();

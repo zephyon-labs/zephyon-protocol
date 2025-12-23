@@ -71,10 +71,11 @@ export function deriveProtocolStatePda(): [PublicKey, number] {
 
 export function deriveTreasuryPda(): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("zephyon_treasury")],
+    [Buffer.from("treasury")],
     PROGRAM_ID()
   );
 }
+
 
 /** User profile PDA seeds:
  * ["user_profile", protocol_state, user_pubkey]

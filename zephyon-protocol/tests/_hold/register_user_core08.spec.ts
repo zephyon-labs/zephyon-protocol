@@ -9,7 +9,7 @@ import {
   deriveProtocolStatePda,
   deriveTreasuryPda,
   airdrop,
-} from "./_helpers";
+} from "../_helpers";
 
 describe("Core08 — register_user basics", () => {
   const provider = anchor.AnchorProvider.env();

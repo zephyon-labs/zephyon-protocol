@@ -4,11 +4,15 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "esModuleInterop": true,
+
     "strict": true,
+    "noImplicitAny": false,
+
     "types": ["node", "mocha"],
     "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "outDir": "dist-tests"
+    "noEmit": true
   },
-  "include": ["tests/**/*.ts"]
+  "include": ["tests/**/*.ts"],
+  "exclude": ["tests/_hold", "tests_legacy"]
 }
+

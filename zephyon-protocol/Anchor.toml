@@ -5,7 +5,7 @@ members = ["programs/protocol"]
 use_docker = false
 
 [programs.localnet]
-protocol = "C3irtmDDybjBXrYYh1mFj9eBVRhKSeA6JX356NrVThyo"
+protocol = "7Huo5pfufAtTyPufiZ9XZGcRLHZyPcnbsjyCDYk8G8iB"
 
 [provider]
 cluster = "localnet"
@@ -13,6 +13,9 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn test"
+
+
+
 
 [test.validator]
 bind_address = "127.0.0.1"

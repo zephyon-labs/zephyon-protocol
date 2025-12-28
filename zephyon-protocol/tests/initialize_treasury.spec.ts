@@ -1,10 +1,8 @@
 import * as anchor from "@coral-xyz/anchor";
-import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
 
-import {
-  deriveTreasuryPda,
-} from "./_helpers";
+import { deriveTreasuryPda } from "./_helpers";
 
 describe("protocol", () => {
   const provider = anchor.AnchorProvider.env();
@@ -25,7 +23,7 @@ describe("protocol", () => {
       .initializeTreasury()
       .accounts({
         treasury: treasuryPda,
-        payer: provider.wallet.publicKey,
+        authority: provider.wallet.publicKey, // ✅ was payer
         systemProgram: SystemProgram.programId,
       })
       .rpc();
@@ -34,3 +32,4 @@ describe("protocol", () => {
     expect(acct).to.not.be.null;
   });
 });
+

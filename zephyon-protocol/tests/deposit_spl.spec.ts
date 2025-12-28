@@ -13,16 +13,12 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 
-
-
 describe("protocol - spl deposit", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
   // Keep it generic, but anchored to your workspace program.
   const program = anchor.workspace.Protocol as any;
-
-
 
   it("deposits SPL from user ATA to treasury ATA", async () => {
     // ─────────────────────────────────────────────
@@ -35,10 +31,10 @@ describe("protocol - spl deposit", () => {
     );
 
     // Anchor IDL camelCases instruction names
-    const ix = program.idl.instructions.find((i) => i.name === "depositSpl");
-    if (!ix) throw new Error("IDL missing instruction: depositSpl");
+    const ix = program.idl.instructions.find((i) => i.name === "splDeposit");
+    if (!ix) throw new Error("IDL missing instruction: splDeposit");
 
-    console.log("depositSpl required accounts:");
+    console.log("splDeposit required accounts:");
     console.log(ix.accounts.map((a) => a.name));
 
     // ─────────────────────────────────────────────
@@ -125,13 +121,10 @@ describe("protocol - spl deposit", () => {
     console.log("Treasury ATA before:", Number(treasuryBefore.amount));
 
     // ─────────────────────────────────────────────
-    // 3) Call depositSpl
+    // 3) Call splDeposit
     // ─────────────────────────────────────────────
     const tx = await program.methods
-      .depositSpl(new BN(depositAmount))
-
-
-
+      .splDeposit(new BN(depositAmount))
       .accounts({
         user: user.publicKey,
         treasury: treasuryPda,
@@ -172,3 +165,4 @@ describe("protocol - spl deposit", () => {
     }
   });
 });
+

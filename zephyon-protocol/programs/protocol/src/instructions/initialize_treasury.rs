@@ -18,3 +18,15 @@ pub struct InitializeTreasury<'info> {
     pub system_program: Program<'info, System>,
 }
 
+pub fn handler(ctx: Context<InitializeTreasury>) -> Result<()> {
+    let treasury = &mut ctx.accounts.treasury;
+
+    treasury.authority = ctx.accounts.authority.key();
+    treasury.bump = ctx.bumps.treasury;
+
+
+    Ok(())
+}
+
+
+

@@ -9,6 +9,8 @@ import {
   getOrCreateAssociatedTokenAccount,
   mintTo,
   getAccount,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 
 describe("protocol - spl withdraw", () => {
@@ -24,10 +26,11 @@ describe("protocol - spl withdraw", () => {
       program.idl.instructions.map((i) => i.name)
     );
 
-    const ix = program.idl.instructions.find((i) => i.name === "withdrawSpl");
-    if (!ix) throw new Error("IDL missing instruction: withdrawSpl");
+    // Anchor IDL camelCases instruction names
+    const ix = program.idl.instructions.find((i) => i.name === "splWithdraw");
+    if (!ix) throw new Error("IDL missing instruction: splWithdraw");
 
-    console.log("withdrawSpl required accounts:");
+    console.log("splWithdraw required accounts:");
     console.log(ix.accounts.map((a) => a.name));
 
     // ─────────────────────────────────────────────
@@ -104,7 +107,10 @@ describe("protocol - spl withdraw", () => {
     );
 
     const userBefore = await getAccount(provider.connection, userAta.address);
-    const treasuryBefore = await getAccount(provider.connection, treasuryAta.address);
+    const treasuryBefore = await getAccount(
+      provider.connection,
+      treasuryAta.address
+    );
 
     console.log("User ATA before:", Number(userBefore.amount));
     console.log("Treasury ATA before:", Number(treasuryBefore.amount));
@@ -113,16 +119,16 @@ describe("protocol - spl withdraw", () => {
     // 4) Withdraw: treasury -> user
     // ─────────────────────────────────────────────
     const sig = await program.methods
-      .withdrawSpl(new BN(amount))
+      .splWithdraw(new BN(amount))
       .accounts({
         user: user.publicKey,
         treasury: treasuryPda,
         mint,
-        user_ata: userAta.address,
-        treasury_ata: treasuryAta.address,
-        token_program: anchor.utils.token.TOKEN_PROGRAM_ID,
-        associated_token_program: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
-        system_program: SystemProgram.programId,
+        userAta: userAta.address,
+        treasuryAta: treasuryAta.address,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
       .signers([user])
@@ -131,7 +137,10 @@ describe("protocol - spl withdraw", () => {
     console.log("tx:", sig);
 
     const userAfter = await getAccount(provider.connection, userAta.address);
-    const treasuryAfter = await getAccount(provider.connection, treasuryAta.address);
+    const treasuryAfter = await getAccount(
+      provider.connection,
+      treasuryAta.address
+    );
 
     console.log("User ATA after:", Number(userAfter.amount));
     console.log("Treasury ATA after:", Number(treasuryAfter.amount));

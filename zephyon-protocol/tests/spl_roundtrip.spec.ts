@@ -9,6 +9,8 @@ import {
   getOrCreateAssociatedTokenAccount,
   mintTo,
   getAccount,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 
 describe("protocol - spl roundtrip", () => {
@@ -84,15 +86,15 @@ describe("protocol - spl roundtrip", () => {
 
     // Deposit user -> treasury
     await program.methods
-      .depositSpl(new BN(amount))
+      .splDeposit(new BN(amount))
       .accounts({
         user: user.publicKey,
         treasury: treasuryPda,
         mint,
         userAta: userAta.address,
         treasuryAta: treasuryAta.address,
-        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
@@ -104,15 +106,15 @@ describe("protocol - spl roundtrip", () => {
 
     // Withdraw treasury -> user
     await program.methods
-      .withdrawSpl(new BN(amount))
+      .splWithdraw(new BN(amount))
       .accounts({
         user: user.publicKey,
         treasury: treasuryPda,
         mint,
         userAta: userAta.address,
         treasuryAta: treasuryAta.address,
-        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })

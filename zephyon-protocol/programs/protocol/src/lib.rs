@@ -1,6 +1,8 @@
 #![allow(clippy::result_large_err)]
 
 use anchor_lang::prelude::*;
+use crate::instructions::spl_deposit_with_receipt::SplDepositWithReceipt;
+use crate::instructions::spl_withdraw_with_receipt::SplWithdrawWithReceipt;
 
 pub mod state;
 pub mod instructions;
@@ -9,6 +11,8 @@ pub mod instructions;
 pub(crate) use instructions::initialize_treasury::__client_accounts_initialize_treasury;
 pub(crate) use instructions::spl_deposit::__client_accounts_spl_deposit;
 pub(crate) use instructions::spl_withdraw::__client_accounts_spl_withdraw;
+pub(crate) use instructions::spl_deposit_with_receipt::__client_accounts_spl_deposit_with_receipt;
+pub(crate) use instructions::spl_withdraw_with_receipt::__client_accounts_spl_withdraw_with_receipt;
 
 declare_id!("7Huo5pfufAtTyPufiZ9XZGcRLHZyPcnbsjyCDYk8G8iB");
 use crate::instructions::{
@@ -29,6 +33,23 @@ pub mod protocol {
     pub fn spl_deposit(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
         crate::instructions::spl_deposit::handler(ctx, amount)
     }
+
+    pub fn spl_deposit_with_receipt(
+    ctx: Context<SplDepositWithReceipt>,
+    amount: u64,
+    ) -> Result<()> {
+    instructions::spl_deposit_with_receipt::handler(ctx, amount)
+
+    }
+
+    pub fn spl_withdraw_with_receipt(
+    ctx: Context<SplWithdrawWithReceipt>,
+    amount: u64,
+) -> Result<()> {
+    instructions::spl_withdraw_with_receipt::handler(ctx, amount)
+}
+
+
 
     pub fn spl_withdraw(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
         crate::instructions::spl_withdraw::handler(ctx, amount)

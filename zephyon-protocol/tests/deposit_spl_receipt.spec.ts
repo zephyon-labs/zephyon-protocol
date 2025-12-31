@@ -98,7 +98,8 @@ describe("protocol - spl deposit with receipt", () => {
     );
 
     await program.methods
-      .depositSplWithReceipt(new anchor.BN(amount), new anchor.BN(txCount))
+      .splDepositWithReceipt(new anchor.BN(amount))
+
       .accounts({
         user: user.publicKey,
         userProfile: userProfilePda,
@@ -117,10 +118,12 @@ describe("protocol - spl deposit with receipt", () => {
 
     // assert receipt exists
     const r = await program.account.receipt.fetch(receiptPda);
+
     if (r.amount.toNumber() !== amount) throw new Error("receipt amount mismatch");
-    if (r.kind !== 1) throw new Error("receipt kind mismatch");
-    if (!new PublicKey(r.user).equals(user.publicKey)) throw new Error("receipt user mismatch");
-    if (!new PublicKey(r.mint).equals(mint)) throw new Error("receipt mint mismatch");
+    if (r.direction.toNumber ? r.direction.toNumber() !== 0 : r.direction !== 0) throw new Error("receipt direction mismatch");
+    if (r.assetKind.toNumber ? r.assetKind.toNumber() !== 1 : r.assetKind !== 1) throw new Error("receipt assetKind mismatch");
+
+
 
     // balance check
     const u = await getAccount(provider.connection, userAta.address);

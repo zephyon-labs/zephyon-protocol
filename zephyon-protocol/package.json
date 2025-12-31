@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
+  "type": "module",
   "scripts": {
     "test": "ts-mocha -p tsconfig.json -r ts-node/register -t 1000000 --exclude \"tests/_hold/**\" --exclude \"tests_legacy/**\" \"tests/**/*.spec.ts\""
   },

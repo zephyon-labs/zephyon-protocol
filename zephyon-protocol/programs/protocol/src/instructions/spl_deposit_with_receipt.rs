@@ -4,7 +4,8 @@ use anchor_spl::{
     token::{self, Mint, Token, TokenAccount, Transfer},
 };
 
-use crate::state::{Receipt, Treasury, UserProfile};
+use crate::state::{Receipt, ReceiptV2Ext, Treasury, UserProfile};
+
 
 #[derive(Accounts)]
 #[instruction(amount: u64)]
@@ -48,7 +49,8 @@ pub struct SplDepositWithReceipt<'info> {
         init,
         payer = user,
         space = 8 + Receipt::LEN,
-        seeds = [b"receipt", user.key().as_ref(), &tx_count.to_le_bytes()],
+        seeds = [b"receipt", user.key().as_ref(), &user_profile.tx_count.to_le_bytes()],
+
         bump
     )]
     pub receipt: Account<'info, Receipt>,

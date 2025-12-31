@@ -1,9 +1,48 @@
-.anchor
-.DS_Store
-target
-**/*.rs.bk
-node_modules
-test-ledger
-.yarn
-../zephyon-protocol_SDK_OLD/
+# -------------------------------
+# Anchor & Solana build artifacts
+# -------------------------------
+.anchor/
+target/
+test-ledger*
+test-ledger/
 test-ledger-local/
+
+# -------------------------------
+# Node / Yarn
+# -------------------------------
+node_modules/
+.npm/
+.yarn/
+.yarn-cache/
+
+# -------------------------------
+# Logs & temp output
+# -------------------------------
+*.log
+dist-tests/
+**/*.bk
+**/*.rs.bk
+
+# -------------------------------
+# Keys — DO NOT COMMIT
+# -------------------------------
+.env
+program-keys/
+program-logs/
+programs/**/keys/
+programs/**/program-keypair.local.json
+tests/keys/*.json
+
+# -------------------------------
+# Old backups / archives
+# -------------------------------
+*_OLD/
+zephyon-protocol_SDK_OLD/
+
+# -------------------------------
+# OS / Editor
+# -------------------------------
+.DS_Store
+.vscode/
+.idea/
+

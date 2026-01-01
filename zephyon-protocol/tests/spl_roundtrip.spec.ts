@@ -109,6 +109,8 @@ describe("protocol - spl roundtrip", () => {
       .splWithdraw(new BN(amount))
       .accounts({
         user: user.publicKey,
+        treasuryAuthority: provider.wallet.publicKey,
+
         treasury: treasuryPda,
         mint,
         userAta: userAta.address,
@@ -118,7 +120,7 @@ describe("protocol - spl roundtrip", () => {
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
-      .signers([user])
+      
       .rpc();
 
     const user2 = await getAccount(provider.connection, userAta.address);

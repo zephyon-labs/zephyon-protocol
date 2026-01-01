@@ -11,7 +11,7 @@ pub struct InitializeTreasury<'info> {
         payer = authority,
         seeds = [b"treasury"],
         bump,
-        space = 8 + 32 + 1
+        space = Treasury::INIT_SPACE
     )]
     pub treasury: Account<'info, Treasury>,
 
@@ -19,14 +19,14 @@ pub struct InitializeTreasury<'info> {
 }
 
 pub fn handler(ctx: Context<InitializeTreasury>) -> Result<()> {
-    let treasury = &mut ctx.accounts.treasury;
+    let bump = ctx.bumps.treasury;
+    let authority = ctx.accounts.authority.key();
 
-    treasury.authority = ctx.accounts.authority.key();
-    treasury.bump = ctx.bumps.treasury;
-
+    ctx.accounts.treasury.initialize(authority, bump);
 
     Ok(())
 }
+
 
 
 

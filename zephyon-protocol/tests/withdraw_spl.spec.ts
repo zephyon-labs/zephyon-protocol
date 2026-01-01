@@ -123,6 +123,8 @@ describe("protocol - spl withdraw", () => {
       .accounts({
         user: user.publicKey,
         treasury: treasuryPda,
+        treasuryAuthority: provider.wallet.publicKey,
+
         mint,
         userAta: userAta.address,
         treasuryAta: treasuryAta.address,
@@ -131,7 +133,7 @@ describe("protocol - spl withdraw", () => {
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
-      .signers([user])
+      
       .rpc();
 
     console.log("tx:", sig);

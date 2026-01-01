@@ -8,9 +8,14 @@ use crate::state::treasury::Treasury;
 
 #[derive(Accounts)]
 pub struct SplWithdraw<'info> {
-    /// User receiving the tokens
+    /// Treasury authority allowed to withdraw (must match treasury.authority)
     #[account(mut)]
-    pub user: Signer<'info>,
+pub treasury_authority: Signer<'info>,
+
+
+    /// Recipient wallet receiving the tokens (does not need to sign)
+    /// CHECK: Only used as ATA authority; constrained by `user_ata` below.
+    pub user: UncheckedAccount<'info>,
 
     /// Treasury PDA (already initialized)
     #[account(
@@ -23,14 +28,16 @@ pub struct SplWithdraw<'info> {
     /// SPL mint being withdrawn
     pub mint: Account<'info, Mint>,
 
-    /// User ATA for that mint (create if missing)
+    /// Recipient ATA for that mint (create if missing; paid by treasury_authority)
     #[account(
-        init_if_needed,
-        payer = user,
-        associated_token::mint = mint,
-        associated_token::authority = user
+    init_if_needed,
+    payer = treasury_authority,
+    associated_token::mint = mint,
+    associated_token::authority = user
     )]
     pub user_ata: Account<'info, TokenAccount>,
+
+
 
     /// Treasury ATA for that mint
     #[account(
@@ -49,6 +56,13 @@ pub struct SplWithdraw<'info> {
 pub fn handler(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
     require!(amount > 0, ErrorCode::InvalidAmount);
 
+    // Only the treasury authority can initiate withdrawals
+    require_keys_eq!(
+        ctx.accounts.treasury_authority.key(),
+        ctx.accounts.treasury.authority,
+        ErrorCode::UnauthorizedWithdraw
+    );
+
     // Treasury PDA signs for transfer out
     let bump = ctx.accounts.treasury.bump;
     let seeds: &[&[u8]] = &[b"treasury", &[bump]];
@@ -60,8 +74,11 @@ pub fn handler(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
         authority: ctx.accounts.treasury.to_account_info(),
     };
 
-    let cpi_ctx =
-        CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer);
+    let cpi_ctx = CpiContext::new_with_signer(
+        ctx.accounts.token_program.to_account_info(),
+        cpi_accounts,
+        signer,
+    );
 
     token::transfer(cpi_ctx, amount)?;
 
@@ -72,6 +89,10 @@ pub fn handler(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
 pub enum ErrorCode {
     #[msg("Amount must be greater than 0")]
     InvalidAmount,
+
+    #[msg("Only the treasury authority may withdraw")]
+    UnauthorizedWithdraw,
 }
+
 
 

@@ -12,6 +12,9 @@ use crate::state::{Receipt, ReceiptV2Ext, Treasury, UserProfile};
 pub struct SplWithdrawWithReceipt<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
+    /// CHECK: must match treasury.authority
+    pub treasury_authority: Signer<'info>,
+
 
     #[account(
         init_if_needed,
@@ -71,6 +74,12 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
         ctx.accounts.user_profile.tx_count = 0;
         ctx.accounts.user_profile.bump = ctx.bumps.user_profile;
     }
+    require_keys_eq!(
+    ctx.accounts.treasury_authority.key(),
+    ctx.accounts.treasury.authority,
+    ErrorCode::UnauthorizedWithdraw
+    );
+
 
     let tx_count = ctx.accounts.user_profile.tx_count;
 
@@ -120,6 +129,11 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
 pub enum ErrorCode {
     #[msg("Amount must be greater than 0")]
     InvalidAmount,
+
+    #[msg("Only the treasury authority may withdraw.")]
+    UnauthorizedWithdraw,
+
     #[msg("Provided tx_count does not match user_profile.tx_count")]
     BadTxCount,
 }
+

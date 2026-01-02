@@ -147,6 +147,8 @@ describe("protocol - spl withdraw with receipt", () => {
     await program.methods
       .splWithdrawWithReceipt(new anchor.BN(amount))
       .accounts({
+        treasuryAuthority: provider.wallet.publicKey,
+
         user: user.publicKey,
         userProfile: userProfilePda,
         treasury: treasuryPda,

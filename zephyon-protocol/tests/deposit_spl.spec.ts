@@ -126,16 +126,16 @@ describe("protocol - spl deposit", () => {
     const tx = await program.methods
       .splDeposit(new BN(depositAmount))
       .accounts({
-        user: user.publicKey,
-        treasury: treasuryPda,
-        mint,
-        userAta: userAta.address,
-        treasuryAta: treasuryAta.address,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      user: user.publicKey,
+      mint,
+      userAta: userAta.address,
+      treasuryAta: treasuryAta.address,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    })
+
       .signers([user])
       .rpc();
 

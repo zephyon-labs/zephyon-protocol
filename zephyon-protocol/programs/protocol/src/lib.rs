@@ -37,10 +37,11 @@ pub mod protocol {
     pub fn spl_deposit_with_receipt(
     ctx: Context<SplDepositWithReceipt>,
     amount: u64,
+    nonce: u64,
     ) -> Result<()> {
-    instructions::spl_deposit_with_receipt::handler(ctx, amount)
-
+    instructions::spl_deposit_with_receipt::handler(ctx, amount, nonce)
     }
+
 
     pub fn spl_withdraw_with_receipt(
     ctx: Context<SplWithdrawWithReceipt>,

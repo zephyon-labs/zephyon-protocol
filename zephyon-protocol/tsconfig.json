@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2020",
     "module": "CommonJS",
-    "moduleResolution": "Node",
+    "moduleResolution": "node",
     "esModuleInterop": true,
 
     "strict": true,
@@ -12,7 +12,16 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["tests/**/*.ts"],
-  "exclude": ["tests/_hold", "tests_legacy"]
+  "include": [
+    "tests/**/*.spec.ts",
+    "tests/_helpers.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "target",
+    "dist-tests",
+    "tests/_hold",
+    "tests_legacy"
+  ]
 }
 

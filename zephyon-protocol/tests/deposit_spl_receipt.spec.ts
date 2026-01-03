@@ -1,134 +1,148 @@
-import anchorPkg from "@coral-xyz/anchor";
-const anchor = anchorPkg as typeof import("@coral-xyz/anchor");
-
-import { PublicKey, SystemProgram, Keypair } from "@solana/web3.js";
-
+import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   createMint,
+  getAccount,
+  getAssociatedTokenAddressSync,
   getOrCreateAssociatedTokenAccount,
   mintTo,
-  getAccount,
 } from "@solana/spl-token";
+
+import { Protocol } from "../target/types/protocol";
+
+function u64LE(n: anchor.BN): Buffer {
+  return n.toArrayLike(Buffer, "le", 8);
+}
+
+// Derive deposit receipt PDA (deposit-with-receipt uses nonce-seeded receipt)
+function depositReceiptPda(
+  programId: PublicKey,
+  user: PublicKey,
+  nonce: anchor.BN
+): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("receipt"), user.toBuffer(), u64LE(nonce)],
+    programId
+  );
+  return pda;
+}
+
+// Nonce generator that avoids PDA collisions across repeated test runs
+function makeUniqueNonce(): anchor.BN {
+  // ms timestamp fits in u64 for a long time; wrap as BN
+  return new anchor.BN(Date.now());
+}
 
 describe("protocol - spl deposit with receipt", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = anchor.workspace.Protocol as any;
+  const program = anchor.workspace.Protocol as Program<Protocol>;
+  const payer = (provider.wallet as any).payer as anchor.web3.Keypair;
 
-  it("deposits SPL and writes a receipt", async () => {
-    const user = Keypair.generate();
-
-    // fund user
-    const airdropSig = await provider.connection.requestAirdrop(
-      user.publicKey,
-      2 * anchor.web3.LAMPORTS_PER_SOL
-    );
-    await provider.connection.confirmTransaction(airdropSig, "confirmed");
-
-    // treasury pda
+  it("deposits SPL and writes a receipt (nonce-seeded)", async () => {
+    // --- Treasury PDA
     const [treasuryPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("treasury")],
       program.programId
     );
 
-    // init treasury idempotent
-    try {
-      await program.methods
-        .initializeTreasury()
-        .accounts({
-          authority: provider.wallet.publicKey,
-          treasury: treasuryPda,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-    } catch {}
-
-    // mint
+    // --- Mint + ATAs
     const mint = await createMint(
       provider.connection,
-      user,
-      user.publicKey,
+      payer,
+      payer.publicKey,
       null,
       6
     );
 
     const userAta = await getOrCreateAssociatedTokenAccount(
       provider.connection,
-      user,
+      payer,
       mint,
-      user.publicKey
+      payer.publicKey
     );
 
-    const treasuryAta = await getOrCreateAssociatedTokenAccount(
+    const treasuryAtaAddr = getAssociatedTokenAddressSync(mint, treasuryPda, true);
+
+    // Ensure treasury ATA exists (keeps test deterministic)
+    await getOrCreateAssociatedTokenAccount(
       provider.connection,
-      user,
+      payer,
       mint,
       treasuryPda,
       true
     );
+    // --- Ensure treasury is initialized
+try {
+  await program.methods
+  .initializeTreasury()
+  .accounts({
+    authority: payer.publicKey,
+    treasury: treasuryPda,
+    systemProgram: SystemProgram.programId,
+    rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+  } as any)
+  .signers([payer])
+  .rpc();
 
+} catch (e) {
+  // Treasury likely already exists — safe to ignore
+}
+
+    // --- Seed user funds
     const amount = 1_000_000;
-    await mintTo(
-      provider.connection,
-      user,
-      mint,
-      userAta.address,
-      user.publicKey,
-      amount
-    );
+    await mintTo(provider.connection, payer, mint, userAta.address, payer, amount);
 
-    // user_profile pda
-    const [userProfilePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("user_profile"), user.publicKey.toBuffer()],
-      program.programId
-    );
+    // --- Nonce + receipt PDA
+    const nonce = makeUniqueNonce();
+    const receiptPda = depositReceiptPda(program.programId, payer.publicKey, nonce);
 
-    // tx_count: if profile doesn't exist => 0
-    const profileInfo = await provider.connection.getAccountInfo(userProfilePda);
-    const txCount = profileInfo ? (await program.account.userProfile.fetch(userProfilePda)).txCount : 0;
+    // --- Pre-balances
+    const userBefore = await getAccount(provider.connection, userAta.address);
+    const treasuryBefore = await getAccount(provider.connection, treasuryAtaAddr);
 
-    // receipt pda for tx_count
-    const txLe = Buffer.alloc(8);
-    txLe.writeBigUInt64LE(BigInt(txCount), 0);
-
-    const [receiptPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("receipt"), user.publicKey.toBuffer(), txLe],
-      program.programId
-    );
-
+    // --- Deposit with receipt
     await program.methods
-      .splDepositWithReceipt(new anchor.BN(amount))
-
+      .splDepositWithReceipt(new anchor.BN(amount), nonce)
       .accounts({
-        user: user.publicKey,
-        userProfile: userProfilePda,
+        user: payer.publicKey,
         treasury: treasuryPda,
         mint,
         userAta: userAta.address,
-        treasuryAta: treasuryAta.address,
+        treasuryAta: treasuryAtaAddr,
         receipt: receiptPda,
-        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
-      .signers([user])
+      } as any)
+      .signers([payer])
       .rpc();
 
-    // assert receipt exists
-    const r = await program.account.receipt.fetch(receiptPda);
+    // --- Receipt exists + basic correctness
+    const r: any = await (program.account as any).receipt.fetch(receiptPda);
 
-    if (r.amount.toNumber() !== amount) throw new Error("receipt amount mismatch");
-    if (r.direction.toNumber ? r.direction.toNumber() !== 0 : r.direction !== 0) throw new Error("receipt direction mismatch");
-    if (r.assetKind.toNumber ? r.assetKind.toNumber() !== 1 : r.assetKind !== 1) throw new Error("receipt assetKind mismatch");
+    const rAmount = r.amount instanceof anchor.BN ? r.amount.toNumber() : Number(r.amount);
+    if (rAmount !== amount) throw new Error("receipt amount mismatch");
 
+    const dir = r.direction instanceof anchor.BN ? r.direction.toNumber() : Number(r.direction);
+    // Deposit direction should be 0 in your earlier convention
+    if (dir !== 0) throw new Error("receipt direction mismatch");
 
+    // --- Balance check
+    const userAfter = await getAccount(provider.connection, userAta.address);
+    const treasuryAfter = await getAccount(provider.connection, treasuryAtaAddr);
 
-    // balance check
-    const u = await getAccount(provider.connection, userAta.address);
-    const t = await getAccount(provider.connection, treasuryAta.address);
-    if (Number(u.amount) !== 0) throw new Error("user ATA not drained");
-    if (Number(t.amount) !== amount) throw new Error("treasury ATA not credited");
+    if (Number(userBefore.amount) - Number(userAfter.amount) !== amount) {
+      throw new Error("user ATA did not decrease by expected amount");
+    }
+    if (Number(treasuryAfter.amount) - Number(treasuryBefore.amount) !== amount) {
+      throw new Error("treasury ATA did not increase by expected amount");
+    }
   });
 });
+

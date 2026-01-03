@@ -4,23 +4,13 @@ use anchor_spl::{
     token::{self, Mint, Token, TokenAccount, Transfer},
 };
 
-use crate::state::{Receipt, ReceiptV2Ext, Treasury, UserProfile};
-
+use crate::state::{Receipt, ReceiptV2Ext, Treasury};
 
 #[derive(Accounts)]
-#[instruction(amount: u64)]
+#[instruction(amount: u64, nonce: u64)]
 pub struct SplDepositWithReceipt<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
-
-    #[account(
-        init_if_needed,
-        payer = user,
-        space = 8 + UserProfile::LEN,
-        seeds = [b"user_profile", user.key().as_ref()],
-        bump
-    )]
-    pub user_profile: Account<'info, UserProfile>,
 
     #[account(
         mut,
@@ -49,8 +39,7 @@ pub struct SplDepositWithReceipt<'info> {
         init,
         payer = user,
         space = 8 + Receipt::LEN,
-        seeds = [b"receipt", user.key().as_ref(), &user_profile.tx_count.to_le_bytes()],
-
+        seeds = [b"receipt", user.key().as_ref(), &nonce.to_le_bytes()],
         bump
     )]
     pub receipt: Account<'info, Receipt>,
@@ -61,18 +50,8 @@ pub struct SplDepositWithReceipt<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
-pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64) -> Result<()> {
+pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64, nonce: u64) -> Result<()> {
     require!(amount > 0, ErrorCode::InvalidAmount);
-
-    // If profile is fresh, initialize it cleanly.
-    if ctx.accounts.user_profile.authority == Pubkey::default() {
-        ctx.accounts.user_profile.authority = ctx.accounts.user.key();
-        ctx.accounts.user_profile.tx_count = 0;
-        ctx.accounts.user_profile.bump = ctx.bumps.user_profile;
-    }
-
-    let tx_count = ctx.accounts.user_profile.tx_count;
-
 
     // SPL transfer: user -> treasury
     let cpi_accounts = Transfer {
@@ -84,7 +63,7 @@ pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64) -> Result<()> {
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
     token::transfer(cpi_ctx, amount)?;
 
-    // Write receipt
+    // Write receipt (immutable fact record)
     let r = &mut ctx.accounts.receipt;
 
     r.user = ctx.accounts.user.key();
@@ -96,13 +75,13 @@ pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64) -> Result<()> {
     r.pre_balance = 0;   // optional for now
     r.post_balance = 0;  // optional for now
     r.ts = Clock::get()?.unix_timestamp;
-    r.tx_count = tx_count;
+
+    // Reuse tx_count field as a generic nonce for deposit receipts.
+    // (Keeps Receipt layout stable without introducing new fields.)
+    r.tx_count = nonce;
+
     r.bump = ctx.bumps.receipt;
     r.v2 = ReceiptV2Ext::spl(ctx.accounts.mint.key());
-
-
-    // increment after
-    ctx.accounts.user_profile.tx_count = ctx.accounts.user_profile.tx_count.saturating_add(1);
 
     Ok(())
 }
@@ -111,6 +90,5 @@ pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64) -> Result<()> {
 pub enum ErrorCode {
     #[msg("Amount must be greater than 0")]
     InvalidAmount,
-    #[msg("Provided tx_count does not match user_profile.tx_count")]
-    BadTxCount,
 }
+

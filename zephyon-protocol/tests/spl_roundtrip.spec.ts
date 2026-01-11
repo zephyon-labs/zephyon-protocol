@@ -1,8 +1,10 @@
-import anchorPkg from "@coral-xyz/anchor";
-const anchor = anchorPkg as typeof import("@coral-xyz/anchor");
+import * as anchor from "@coral-xyz/anchor";
+
 
 import { PublicKey, SystemProgram, Keypair } from "@solana/web3.js";
 import BN from "bn.js";
+import { loadProtocolAuthority, airdrop } from "./_helpers";
+
 
 import {
   createMint,
@@ -20,6 +22,9 @@ describe("protocol - spl roundtrip", () => {
   const program = anchor.workspace.Protocol as any;
 
   it("mints -> deposits -> withdraws back (round-trip)", async () => {
+    const protocolAuth = loadProtocolAuthority();
+    await airdrop(provider, protocolAuth.publicKey, 2);
+
     // PDA
     const [treasuryPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("treasury")],
@@ -109,8 +114,7 @@ describe("protocol - spl roundtrip", () => {
       .splWithdraw(new BN(amount))
       .accounts({
         user: user.publicKey,
-        treasuryAuthority: provider.wallet.publicKey,
-
+        treasuryAuthority: protocolAuth.publicKey,
         treasury: treasuryPda,
         mint,
         userAta: userAta.address,
@@ -119,9 +123,10 @@ describe("protocol - spl roundtrip", () => {
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
-      
+      } as any)
+      .signers([protocolAuth])
       .rpc();
+
 
     const user2 = await getAccount(provider.connection, userAta.address);
     const tre2 = await getAccount(provider.connection, treasuryAta.address);

@@ -5,6 +5,10 @@ use anchor_spl::{
 };
 
 use crate::state::{Receipt, ReceiptV2Ext, Treasury, UserProfile};
+use crate::events::WithdrawEvent;
+use crate::errors::ErrorCode;
+
+
 
 
 #[derive(Accounts)]
@@ -66,7 +70,9 @@ pub struct SplWithdrawWithReceipt<'info> {
 }
 
 pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> {
+    require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
     require!(amount > 0, ErrorCode::InvalidAmount);
+
 
     // If profile is fresh, initialize it cleanly.
     if ctx.accounts.user_profile.authority == Pubkey::default() {
@@ -122,18 +128,23 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
 
     ctx.accounts.user_profile.tx_count = ctx.accounts.user_profile.tx_count.saturating_add(1);
 
+    let slot = Clock::get()?.slot;
+
+    emit!(WithdrawEvent {
+        authority: ctx.accounts.treasury_authority.key(),
+        user: ctx.accounts.user.key(),
+        mint: ctx.accounts.user_ata.mint,
+        amount,
+        treasury: ctx.accounts.treasury.key(),
+        receipt: ctx.accounts.receipt.key(),
+        nonce_or_tx: ctx.accounts.user_profile.tx_count, // OR tx_count used for seed
+        xp_delta: 1,
+        risk_flags: 0,
+        slot,
+    });
+
     Ok(())
 }
 
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Amount must be greater than 0")]
-    InvalidAmount,
 
-    #[msg("Only the treasury authority may withdraw.")]
-    UnauthorizedWithdraw,
-
-    #[msg("Provided tx_count does not match user_profile.tx_count")]
-    BadTxCount,
-}
 

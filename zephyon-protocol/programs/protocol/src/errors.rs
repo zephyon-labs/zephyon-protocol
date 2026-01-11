@@ -1,0 +1,18 @@
+use anchor_lang::prelude::*;
+
+#[error_code]
+pub enum ErrorCode {
+    #[msg("Protocol is paused.")]
+    ProtocolPaused,
+
+    #[msg("Amount must be greater than 0.")]
+    InvalidAmount,
+
+    #[msg("Only the treasury authority may withdraw.")]
+    UnauthorizedWithdraw,
+
+    #[msg("Only the treasury authority may pause/unpause.")]
+    UnauthorizedPause,
+
+}
+

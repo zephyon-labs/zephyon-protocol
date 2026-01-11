@@ -1,6 +1,8 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { loadProtocolAuthority, airdrop } from "./_helpers";
+
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -77,21 +79,24 @@ describe("protocol - spl deposit with receipt", () => {
       true
     );
     // --- Ensure treasury is initialized
-try {
-  await program.methods
-  .initializeTreasury()
-  .accounts({
-    authority: payer.publicKey,
-    treasury: treasuryPda,
-    systemProgram: SystemProgram.programId,
-    rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-  } as any)
-  .signers([payer])
-  .rpc();
+    // --- Ensure treasury is initialized (MUST be protocol authority, not payer)
+    const protocolAuth = loadProtocolAuthority();
+    await airdrop(provider, protocolAuth.publicKey, 2);
 
-} catch (e) {
-  // Treasury likely already exists — safe to ignore
-}
+    try {
+      await program.methods
+        .initializeTreasury()
+        .accounts({
+          authority: protocolAuth.publicKey,
+          treasury: treasuryPda,
+          systemProgram: SystemProgram.programId,
+        } as any)
+        .signers([protocolAuth])
+        .rpc();
+    } catch (e) {
+      // Treasury likely already exists — safe to ignore
+    }
+
 
     // --- Seed user funds
     const amount = 1_000_000;

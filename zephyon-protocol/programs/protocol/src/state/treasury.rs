@@ -7,14 +7,15 @@ use anchor_lang::prelude::*;
 pub struct Treasury {
     /// Authority allowed to perform privileged actions (e.g., withdraw).
     pub authority: Pubkey,
-
-    /// PDA bump for the treasury PDA derivation.
+    pub paused: bool,      // NEW
     pub bump: u8,
+
 }
 
 impl Treasury {
     /// Anchor account discriminator (8) + Pubkey (32) + u8 (1)
-    pub const INIT_SPACE: usize = 8 + 32 + 1;
+    pub const INIT_SPACE: usize = 8 + 32 + 1 + 1;
+
 
     /// Convenience initializer for consistent state creation.
     pub fn initialize(&mut self, authority: Pubkey, bump: u8) {

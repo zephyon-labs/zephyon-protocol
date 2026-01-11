@@ -1,8 +1,9 @@
-import anchorPkg from "@coral-xyz/anchor";
-const anchor = anchorPkg as typeof import("@coral-xyz/anchor");
+import * as anchor from "@coral-xyz/anchor";
 
 import { PublicKey, SystemProgram, Keypair } from "@solana/web3.js";
 import BN from "bn.js";
+import { loadProtocolAuthority, airdrop } from "./_helpers";
+
 
 import {
   createMint,
@@ -20,6 +21,9 @@ describe("protocol - spl withdraw", () => {
   const program = anchor.workspace.Protocol as any;
 
   it("withdraws SPL from treasury ATA to user ATA", async () => {
+    const protocolAuth = loadProtocolAuthority();
+    await airdrop(provider, protocolAuth.publicKey, 2);
+
     console.log("PROGRAM ID:", program.programId.toBase58());
     console.log(
       "IDL instruction names:",
@@ -121,22 +125,23 @@ describe("protocol - spl withdraw", () => {
     const sig = await program.methods
       .splWithdraw(new BN(amount))
       .accounts({
-        user: user.publicKey,
-        treasury: treasuryPda,
-        treasuryAuthority: provider.wallet.publicKey,
+      user: user.publicKey,
+      treasury: treasuryPda,
+      treasuryAuthority: protocolAuth.publicKey,
 
-        mint,
-        userAta: userAta.address,
-        treasuryAta: treasuryAta.address,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
-      
-      .rpc();
+      mint,
+      userAta: userAta.address,
+      treasuryAta: treasuryAta.address,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    } as any)
+    .signers([protocolAuth])
+    .rpc();
 
-    console.log("tx:", sig);
+  console.log("tx:", sig);
+
 
     const userAfter = await getAccount(provider.connection, userAta.address);
     const treasuryAfter = await getAccount(

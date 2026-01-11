@@ -52,7 +52,14 @@ export function PROGRAM_ID(): PublicKey {
 export function toLeU64(n: BN | bigint | number): Buffer {
   if (BN.isBN(n as any)) return (n as BN).toArrayLike(Buffer, "le", 8);
   const buf = Buffer.alloc(8);
-  buf.writeBigUInt64LE(typeof n === "bigint" ? n : BigInt(n));
+  buf.writeBigUInt64LE(
+  typeof n === "bigint"
+    ? n
+    : typeof n === "number"
+    ? BigInt(n)
+    : BigInt(n.toString())
+);
+
   return buf;
 }
 
@@ -179,7 +186,6 @@ export async function initFoundationOnce(
   _ignored?: any
 ) {
   const [treasuryPda] = deriveTreasuryPda();
-  const [protocolStatePda] = deriveProtocolStatePda();
 
   const protocolAuth = loadProtocolAuthority();
   await airdrop(provider, protocolAuth.publicKey, 2);
@@ -197,36 +203,22 @@ export async function initFoundationOnce(
       .rpc();
   } catch (_) {}
 
-  // initialize_protocol (idempotent)
+  // Verify treasury exists (this matches your actual program/IDL reality)
   try {
-    await program.methods
-      .initializeProtocol()
-      .accounts({
-        protocolState: protocolStatePda,
-        authority: protocolAuth.publicKey,
-        treasury: treasuryPda,
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([protocolAuth])
-      .rpc();
-  } catch (_) {}
-
-  // hard verification — relax type name via any
-  try {
-    await (program.account as any).protocolState.fetch(protocolStatePda);
+    await (program.account as any).treasury.fetch(treasuryPda);
   } catch (e) {
     throw new Error(
-      `protocol_state NOT initialized. Check PROTOCOL_AUTHORITY vs tests/keys/protocol-authority.json and program ID vs target/idl/protocol.json.`
+      `treasury NOT initialized. Check PROTOCOL_AUTHORITY vs tests/keys/protocol-authority.json and program ID vs target/idl/protocol.json.`
     );
   }
 
   return {
     programId: PROGRAM_ID(),
     treasuryPda,
-    protocolStatePda,
     protocolAuth,
   };
 }
+
 
 /* ─────────────────────────────────────────────────────────
  * SPL helpers (mint + ATAs)

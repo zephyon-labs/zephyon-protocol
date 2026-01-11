@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use crate::state::treasury::Treasury;
 
+
 #[derive(Accounts)]
 pub struct InitializeTreasury<'info> {
     #[account(mut)]
@@ -19,13 +20,16 @@ pub struct InitializeTreasury<'info> {
 }
 
 pub fn handler(ctx: Context<InitializeTreasury>) -> Result<()> {
-    let bump = ctx.bumps.treasury;
-    let authority = ctx.accounts.authority.key();
+    let treasury = &mut ctx.accounts.treasury;
 
-    ctx.accounts.treasury.initialize(authority, bump);
+    treasury.authority = ctx.accounts.authority.key();
+    treasury.paused = false;
+    treasury.bump = ctx.bumps.treasury;
 
     Ok(())
 }
+
+
 
 
 

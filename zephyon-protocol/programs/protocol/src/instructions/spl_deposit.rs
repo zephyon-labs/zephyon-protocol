@@ -1,8 +1,12 @@
 use anchor_lang::prelude::*;
+
 use anchor_spl::{
     associated_token::AssociatedToken,
     token::{self, Mint, Token, TokenAccount, Transfer},
 };
+use crate::events::DepositEvent;
+use crate::errors::ErrorCode;
+
 
 use crate::state::treasury::Treasury;
 
@@ -56,7 +60,9 @@ pub struct SplDeposit<'info> {
 }
 
 pub fn handler(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
-    require!(amount > 0, ZephyonError::InvalidAmount);
+    require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
+    require!(amount > 0, ErrorCode::InvalidAmount);
+
 
     // Transfer from user ATA -> treasury ATA
     let cpi_accounts = Transfer {
@@ -67,6 +73,21 @@ pub fn handler(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
 
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
     token::transfer(cpi_ctx, amount)?;
+
+    let slot = Clock::get()?.slot;
+
+    emit!(DepositEvent {
+        user: ctx.accounts.user.key(),
+        mint: ctx.accounts.user_ata.mint, // or whichever token account is present
+        amount,
+        treasury: ctx.accounts.treasury.key(),
+        receipt: Pubkey::default(),
+        nonce_or_tx: 0,
+        xp_delta: 1,
+        risk_flags: 0,
+        slot,
+    });
+
 
     emit!(SplDepositEvent {
         user: ctx.accounts.user.key(),
@@ -79,11 +100,7 @@ pub fn handler(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
     Ok(())
 }
 
-#[error_code]
-pub enum ZephyonError {
-    #[msg("Amount must be greater than 0")]
-    InvalidAmount,
-}
+
 
 
 

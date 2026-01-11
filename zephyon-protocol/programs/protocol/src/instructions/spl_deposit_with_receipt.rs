@@ -5,6 +5,10 @@ use anchor_spl::{
 };
 
 use crate::state::{Receipt, ReceiptV2Ext, Treasury};
+use crate::events::DepositEvent;
+use crate::errors::ErrorCode;
+
+
 
 #[derive(Accounts)]
 #[instruction(amount: u64, nonce: u64)]
@@ -51,7 +55,9 @@ pub struct SplDepositWithReceipt<'info> {
 }
 
 pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64, nonce: u64) -> Result<()> {
+    require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
     require!(amount > 0, ErrorCode::InvalidAmount);
+
 
     // SPL transfer: user -> treasury
     let cpi_accounts = Transfer {
@@ -83,12 +89,20 @@ pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64, nonce: u64) -> 
     r.bump = ctx.bumps.receipt;
     r.v2 = ReceiptV2Ext::spl(ctx.accounts.mint.key());
 
+    let slot = Clock::get()?.slot;
+
+        emit!(DepositEvent {
+        user: ctx.accounts.user.key(),
+        mint: ctx.accounts.user_ata.mint,
+        amount,
+        treasury: ctx.accounts.treasury.key(),
+        receipt: ctx.accounts.receipt.key(),
+        nonce_or_tx: nonce, // assuming your arg is named nonce
+        xp_delta: 1,
+        risk_flags: 0,
+        slot,
+    });
     Ok(())
 }
 
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Amount must be greater than 0")]
-    InvalidAmount,
-}
 

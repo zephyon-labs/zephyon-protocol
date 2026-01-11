@@ -1,6 +1,8 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { loadProtocolAuthority, airdrop } from "./_helpers";
+
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -54,6 +56,9 @@ describe("protocol - spl withdraw with receipt", () => {
   const payer = (provider.wallet as any).payer as anchor.web3.Keypair;
 
   it("withdraws SPL and writes a receipt", async () => {
+        const protocolAuth = loadProtocolAuthority();
+    await airdrop(provider, protocolAuth.publicKey, 2);
+
     // --- Treasury PDA
     const [treasuryPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("treasury")],
@@ -126,7 +131,7 @@ describe("protocol - spl withdraw with receipt", () => {
       .splWithdrawWithReceipt(new anchor.BN(amount))
       .accounts({
         user: payer.publicKey,
-        treasuryAuthority: payer.publicKey,
+        treasuryAuthority: protocolAuth.publicKey,
         userProfile: userProfilePda,
         treasury: treasuryPda,
         mint,
@@ -138,7 +143,7 @@ describe("protocol - spl withdraw with receipt", () => {
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       } as any)
-      .signers([payer])
+      .signers([protocolAuth])
       .rpc();
 
     const userAfter = await getAccount(provider.connection, userAta.address);

@@ -1,5 +1,5 @@
-import anchorPkg from "@coral-xyz/anchor";
-const anchor = anchorPkg as typeof import("@coral-xyz/anchor");
+import * as anchor from "@coral-xyz/anchor";
+
 
 import { PublicKey, SystemProgram, Keypair } from "@solana/web3.js";
 import BN from "bn.js";

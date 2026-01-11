@@ -5,6 +5,9 @@ use anchor_spl::{
 };
 
 use crate::state::treasury::Treasury;
+use crate::events::WithdrawEvent;
+use crate::errors::ErrorCode;
+
 
 #[derive(Accounts)]
 pub struct SplWithdraw<'info> {
@@ -54,7 +57,9 @@ pub treasury_authority: Signer<'info>,
 }
 
 pub fn handler(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
+    require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
     require!(amount > 0, ErrorCode::InvalidAmount);
+
 
     // Only the treasury authority can initiate withdrawals
     require_keys_eq!(
@@ -82,17 +87,21 @@ pub fn handler(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
 
     token::transfer(cpi_ctx, amount)?;
 
+    let slot = Clock::get()?.slot;
+
+    emit!(WithdrawEvent {
+        authority: ctx.accounts.treasury_authority.key(),
+        user: ctx.accounts.user.key(),
+        mint: ctx.accounts.user_ata.mint, // again: depends on your naming
+        amount,
+        treasury: ctx.accounts.treasury.key(),
+        receipt: Pubkey::default(),
+        nonce_or_tx: 0,
+        xp_delta: 1,
+        risk_flags: 0,
+        slot,
+    });
     Ok(())
 }
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Amount must be greater than 0")]
-    InvalidAmount,
-
-    #[msg("Only the treasury authority may withdraw")]
-    UnauthorizedWithdraw,
-}
-
 
 

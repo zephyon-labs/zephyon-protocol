@@ -1,6 +1,5 @@
-use anchor_lang::prelude::*;
 use crate::state::treasury::Treasury;
-
+use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
 pub struct InitializeTreasury<'info> {
@@ -28,9 +27,3 @@ pub fn handler(ctx: Context<InitializeTreasury>) -> Result<()> {
 
     Ok(())
 }
-
-
-
-
-
-

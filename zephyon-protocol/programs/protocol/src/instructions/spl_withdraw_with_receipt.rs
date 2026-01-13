@@ -4,12 +4,9 @@ use anchor_spl::{
     token::{self, Mint, Token, TokenAccount, Transfer},
 };
 
-use crate::state::{Receipt, ReceiptV2Ext, Treasury, UserProfile};
-use crate::events::WithdrawEvent;
 use crate::errors::ErrorCode;
-
-
-
+use crate::events::WithdrawEvent;
+use crate::state::{Receipt, ReceiptV2Ext, Treasury, UserProfile};
 
 #[derive(Accounts)]
 #[instruction(amount: u64)]
@@ -18,7 +15,6 @@ pub struct SplWithdrawWithReceipt<'info> {
     pub user: Signer<'info>,
     /// CHECK: must match treasury.authority
     pub treasury_authority: Signer<'info>,
-
 
     #[account(
         init_if_needed,
@@ -73,7 +69,6 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
     require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
     require!(amount > 0, ErrorCode::InvalidAmount);
 
-
     // If profile is fresh, initialize it cleanly.
     if ctx.accounts.user_profile.authority == Pubkey::default() {
         ctx.accounts.user_profile.authority = ctx.accounts.user.key();
@@ -81,14 +76,12 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
         ctx.accounts.user_profile.bump = ctx.bumps.user_profile;
     }
     require_keys_eq!(
-    ctx.accounts.treasury_authority.key(),
-    ctx.accounts.treasury.authority,
-    ErrorCode::UnauthorizedWithdraw
+        ctx.accounts.treasury_authority.key(),
+        ctx.accounts.treasury.authority,
+        ErrorCode::UnauthorizedWithdraw
     );
 
-
     let tx_count = ctx.accounts.user_profile.tx_count;
-
 
     // Treasury signs out
     let bump = ctx.accounts.treasury.bump;
@@ -125,7 +118,6 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
     r.bump = ctx.bumps.receipt;
     r.v2 = ReceiptV2Ext::spl(ctx.accounts.mint.key());
 
-
     ctx.accounts.user_profile.tx_count = ctx.accounts.user_profile.tx_count.saturating_add(1);
 
     let slot = Clock::get()?.slot;
@@ -145,6 +137,3 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
 
     Ok(())
 }
-
-
-

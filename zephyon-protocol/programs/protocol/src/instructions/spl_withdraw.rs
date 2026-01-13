@@ -4,17 +4,15 @@ use anchor_spl::{
     token::{self, Mint, Token, TokenAccount, Transfer},
 };
 
-use crate::state::treasury::Treasury;
-use crate::events::WithdrawEvent;
 use crate::errors::ErrorCode;
-
+use crate::events::WithdrawEvent;
+use crate::state::treasury::Treasury;
 
 #[derive(Accounts)]
 pub struct SplWithdraw<'info> {
     /// Treasury authority allowed to withdraw (must match treasury.authority)
     #[account(mut)]
-pub treasury_authority: Signer<'info>,
-
+    pub treasury_authority: Signer<'info>,
 
     /// Recipient wallet receiving the tokens (does not need to sign)
     /// CHECK: Only used as ATA authority; constrained by `user_ata` below.
@@ -24,7 +22,8 @@ pub treasury_authority: Signer<'info>,
     #[account(
         mut,
         seeds = [b"treasury"],
-        bump = treasury.bump
+        bump = treasury.bump,
+        constraint = !treasury.paused @ ErrorCode::ProtocolPaused
     )]
     pub treasury: Account<'info, Treasury>,
 
@@ -33,14 +32,12 @@ pub treasury_authority: Signer<'info>,
 
     /// Recipient ATA for that mint (create if missing; paid by treasury_authority)
     #[account(
-    init_if_needed,
-    payer = treasury_authority,
-    associated_token::mint = mint,
-    associated_token::authority = user
+        init_if_needed,
+        payer = treasury_authority,
+        associated_token::mint = mint,
+        associated_token::authority = user
     )]
     pub user_ata: Account<'info, TokenAccount>,
-
-
 
     /// Treasury ATA for that mint
     #[account(
@@ -59,7 +56,6 @@ pub treasury_authority: Signer<'info>,
 pub fn handler(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
     require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
     require!(amount > 0, ErrorCode::InvalidAmount);
-
 
     // Only the treasury authority can initiate withdrawals
     require_keys_eq!(
@@ -103,5 +99,3 @@ pub fn handler(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
     });
     Ok(())
 }
-
-

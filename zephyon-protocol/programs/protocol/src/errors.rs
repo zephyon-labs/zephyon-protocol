@@ -13,6 +13,15 @@ pub enum ErrorCode {
 
     #[msg("Only the treasury authority may pause/unpause.")]
     UnauthorizedPause,
+    #[msg("User token account owner mismatch.")]
+    InvalidUserTokenAccountOwner,
 
+    #[msg("Treasury token account owner mismatch.")]
+    InvalidTreasuryTokenAccountOwner,
+
+    #[msg("Token mint mismatch.")]
+    InvalidMint,
+
+    #[msg("Insufficient funds.")]
+    InsufficientFunds,
 }
-

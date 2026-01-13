@@ -17,10 +17,8 @@ pub struct UserProfile {
 
 impl UserProfile {
     /// Total bytes for account allocation (INCLUDING discriminator)
-    pub const LEN: usize =
-        8  // discriminator
+    pub const LEN: usize = 8  // discriminator
         + 32 // authority
         + 8  // tx_count
         + 1; // bump
 }
-

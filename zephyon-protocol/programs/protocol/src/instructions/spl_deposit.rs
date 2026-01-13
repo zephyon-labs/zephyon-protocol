@@ -1,12 +1,11 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token::spl_token;
 
+use crate::errors::ErrorCode;
 use anchor_spl::{
     associated_token::AssociatedToken,
     token::{self, Mint, Token, TokenAccount, Transfer},
 };
-use crate::events::DepositEvent;
-use crate::errors::ErrorCode;
-
 
 use crate::state::treasury::Treasury;
 
@@ -29,7 +28,8 @@ pub struct SplDeposit<'info> {
     #[account(
         mut,
         seeds = [b"treasury"],
-        bump
+        bump,
+        constraint = !treasury.paused @ ErrorCode::ProtocolPaused
     )]
     pub treasury: Account<'info, Treasury>,
 
@@ -40,7 +40,9 @@ pub struct SplDeposit<'info> {
     #[account(
         mut,
         associated_token::mint = mint,
-        associated_token::authority = user
+        associated_token::authority = user,
+        constraint = user_ata.owner == user.key() @ ErrorCode::InvalidUserTokenAccountOwner,
+        constraint = user_ata.mint == mint.key() @ ErrorCode::InvalidMint
     )]
     pub user_ata: Account<'info, TokenAccount>,
 
@@ -49,20 +51,28 @@ pub struct SplDeposit<'info> {
         init_if_needed,
         payer = user,
         associated_token::mint = mint,
-        associated_token::authority = treasury
+        associated_token::authority = treasury,
+        constraint = treasury_ata.owner == treasury.key() @ ErrorCode::InvalidTreasuryTokenAccountOwner,
+        constraint = treasury_ata.mint == mint.key() @ ErrorCode::InvalidMint
+        
+
     )]
     pub treasury_ata: Account<'info, TokenAccount>,
 
+    #[account(address = spl_token::ID)]
     pub token_program: Program<'info, Token>,
+
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
     pub rent: Sysvar<'info, Rent>,
 }
 
 pub fn handler(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
-    require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
     require!(amount > 0, ErrorCode::InvalidAmount);
-
+    require!(
+        ctx.accounts.user_ata.amount >= amount,
+        ErrorCode::InsufficientFunds
+    );
 
     // Transfer from user ATA -> treasury ATA
     let cpi_accounts = Transfer {
@@ -74,21 +84,7 @@ pub fn handler(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
     token::transfer(cpi_ctx, amount)?;
 
-    let slot = Clock::get()?.slot;
-
-    emit!(DepositEvent {
-        user: ctx.accounts.user.key(),
-        mint: ctx.accounts.user_ata.mint, // or whichever token account is present
-        amount,
-        treasury: ctx.accounts.treasury.key(),
-        receipt: Pubkey::default(),
-        nonce_or_tx: 0,
-        xp_delta: 1,
-        risk_flags: 0,
-        slot,
-    });
-
-
+    // Recommend: keep ONE canonical event (SplDepositEvent) until receipts/XP/risk are real.
     emit!(SplDepositEvent {
         user: ctx.accounts.user.key(),
         mint: ctx.accounts.mint.key(),
@@ -99,11 +95,3 @@ pub fn handler(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
 
     Ok(())
 }
-
-
-
-
-
-
-
-

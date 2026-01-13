@@ -47,8 +47,7 @@ impl Receipt {
     pub const ASSET_SPL: u8 = 1;
 
     /// Space excluding the 8-byte discriminator (Anchor adds that separately in init via `space = 8 + ...`)
-    pub const LEN: usize =
-        32 + // user
+    pub const LEN: usize = 32 + // user
         1  + // direction
         1  + // asset_kind
         32 + // mint
@@ -79,11 +78,17 @@ impl ReceiptV2Ext {
     pub const LEN: usize = 2 + 32;
 
     pub fn sol() -> Self {
-        Self { flags: 0, spl_mint: Pubkey::default() }
+        Self {
+            flags: 0,
+            spl_mint: Pubkey::default(),
+        }
     }
 
     pub fn spl(mint: Pubkey) -> Self {
-        Self { flags: 0, spl_mint: mint }
+        Self {
+            flags: 0,
+            spl_mint: mint,
+        }
     }
 }
 
@@ -100,5 +105,3 @@ pub struct ReceiptCreated {
     pub ts: i64,
     pub tx_count: u64,
 }
-
-

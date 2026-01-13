@@ -14,8 +14,14 @@ pub struct SetTreasuryPaused<'info> {
 pub fn handler(ctx: Context<SetTreasuryPaused>, paused: bool) -> Result<()> {
     msg!("SetTreasuryPaused invoked");
     msg!("Treasury PDA: {}", ctx.accounts.treasury.key());
-    msg!("Treasury stored authority: {}", ctx.accounts.treasury.authority);
-    msg!("Signer treasury_authority: {}", ctx.accounts.treasury_authority.key());
+    msg!(
+        "Treasury stored authority: {}",
+        ctx.accounts.treasury.authority
+    );
+    msg!(
+        "Signer treasury_authority: {}",
+        ctx.accounts.treasury_authority.key()
+    );
     msg!("Requested paused -> {}", paused);
 
     require!(
@@ -28,4 +34,3 @@ pub fn handler(ctx: Context<SetTreasuryPaused>, paused: bool) -> Result<()> {
     msg!("Treasury paused is now: {}", ctx.accounts.treasury.paused);
     Ok(())
 }
-

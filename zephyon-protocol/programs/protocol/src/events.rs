@@ -16,8 +16,8 @@ pub struct DepositEvent {
     pub nonce_or_tx: u64,
 
     // Telemetry-first (grant safe)
-    pub xp_delta: u32,     // start simple: 1
-    pub risk_flags: u32,   // start simple: 0
+    pub xp_delta: u32,   // start simple: 1
+    pub risk_flags: u32, // start simple: 0
 
     pub slot: u64,
 }
@@ -37,8 +37,8 @@ pub struct WithdrawEvent {
     // For others: 0
     pub nonce_or_tx: u64,
 
-    pub xp_delta: u32,     // start simple: 1
-    pub risk_flags: u32,   // start simple: 0
+    pub xp_delta: u32,   // start simple: 1
+    pub risk_flags: u32, // start simple: 0
 
     pub slot: u64,
 }

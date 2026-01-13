@@ -4,11 +4,9 @@ use anchor_spl::{
     token::{self, Mint, Token, TokenAccount, Transfer},
 };
 
-use crate::state::{Receipt, ReceiptV2Ext, Treasury};
-use crate::events::DepositEvent;
 use crate::errors::ErrorCode;
-
-
+use crate::events::DepositEvent;
+use crate::state::{Receipt, ReceiptV2Ext, Treasury};
 
 #[derive(Accounts)]
 #[instruction(amount: u64, nonce: u64)]
@@ -58,7 +56,6 @@ pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64, nonce: u64) -> 
     require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
     require!(amount > 0, ErrorCode::InvalidAmount);
 
-
     // SPL transfer: user -> treasury
     let cpi_accounts = Transfer {
         from: ctx.accounts.user_ata.to_account_info(),
@@ -78,8 +75,8 @@ pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64, nonce: u64) -> 
     r.mint = ctx.accounts.mint.key();
     r.amount = amount;
     r.fee = 0;
-    r.pre_balance = 0;   // optional for now
-    r.post_balance = 0;  // optional for now
+    r.pre_balance = 0; // optional for now
+    r.post_balance = 0; // optional for now
     r.ts = Clock::get()?.unix_timestamp;
 
     // Reuse tx_count field as a generic nonce for deposit receipts.
@@ -91,7 +88,7 @@ pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64, nonce: u64) -> 
 
     let slot = Clock::get()?.slot;
 
-        emit!(DepositEvent {
+    emit!(DepositEvent {
         user: ctx.accounts.user.key(),
         mint: ctx.accounts.user_ata.mint,
         amount,
@@ -104,5 +101,3 @@ pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64, nonce: u64) -> 
     });
     Ok(())
 }
-
-

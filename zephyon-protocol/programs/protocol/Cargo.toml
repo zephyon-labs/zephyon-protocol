@@ -17,6 +17,16 @@ anchor-spl  = { version = "0.32.1", features = ["token", "associated_token"] }
 default = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
+# Silence Rust "unexpected cfg" warnings from Anchor macros
+no-entrypoint = []
+cpi = []
+custom-heap = []
+custom-panic = []
+anchor-debug = []
+no-idl = []
+no-log-ix-name = []
+
+
 
 
 

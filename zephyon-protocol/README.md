@@ -1,57 +1,132 @@
-# ⚡ Zephyon Protocol  
-### Solana-Based Treasury & Payments Engine • Rust + Anchor
+# Zephyon Protocol
 
-Zephyon Protocol is the on-chain backbone of the Zephy ecosystem — a fast, secure, and developer-friendly financial layer built on **Solana**, powered by **Rust + Anchor**, and designed for real-world payments at scale.
+**Calm, safety-first payment and accounting infrastructure on Solana.**
 
-While most crypto rails focus on speculation, Zephyon Protocol is engineered for *usability*:  
-**fast transfers, clean account architecture, proper treasury management, and AI-assisted client tooling.**
+Zephyon is a Solana-native protocol designed to provide secure treasury management, receipt-backed accounting, and explicit operational controls for on-chain payment flows. Rather than focusing on flashy UX or speculative mechanics, Zephyon prioritizes *correctness, safety, and auditability* at the protocol layer—so downstream applications can build user-friendly payment experiences with confidence.
 
-This repository contains the canonical on-chain program for Zephyon Protocol (Core07 architecture).
+Zephyon is infrastructure. Products and applications (such as **ZephiPay**, a downstream payment application) are built *on top* of it.
 
 ---
 
-## ✨ Features (Current & Upcoming)
+## Design Goals
 
-### **Core (Implemented)**
-- **ProtocolState PDA** — defines protocol-level authority and links to the canonical Treasury.
-- **Treasury PDA** — secure storage for protocol deposits; tracks total deposited lamports.
-- **UserAccount PDA** — individual user state (authority, deposited balance, bump).
-- **Initialize Protocol** — creates new protocol instances with structured PDA seeds.
-- **Initialize Treasury** — deploys the canonical treasury for this protocol instance.
+Zephyon is built around a small set of deliberate principles:
 
-### **In Progress (Core08–Core12)**
-- **Register User** — creates authenticated UserAccount PDAs.
-- **Deposit & Withdraw** — safe lamport movement with overflow & authorization guards.
-- **Event Logging** — on-chain logs for external indexers and dashboards.
-
-### **Future Releases**
-- **Staking Engine** — non-inflationary staking model with real yield from treasury actions.
-- **Compliance Layer** — optional, configurable checks for enterprise integrations.
-- **AI-Integrated Client SDK** — human-friendly TypeScript SDK built for dApps, wallets, and AI agents.
-- **ZephyPay App Integration** — the consumer-facing wallet powered by this protocol.
+* **Safety before incentives** – core funds movement must be secure before introducing token economics or growth mechanics.
+* **Accounting before UX** – reliable receipts and records are a prerequisite for real-world payments.
+* **Explicit authority boundaries** – who can do what is enforced at the protocol level, not assumed off-chain.
+* **Operational calm** – protocols should fail safely and predictably under stress.
+* **Composable by default** – designed to integrate cleanly with existing Solana tooling and payment rails.
 
 ---
 
-## 🧱 Program Architecture
+## What Zephyon Is (and Is Not)
 
-Each major component is structured as an Anchor account:
+### Zephyon *is*:
 
-- `ProtocolState`  
-  - Holds the protocol authority key  
-  - Stores the treasury PDA  
-  - Controls top-level protocol actions  
+* A **treasury and accounting protocol** for SPL-based payment flows
+* A **receipt-backed system of record** for deposits and withdrawals
+* A **safety-oriented foundation** for payment applications
+* An **infrastructure layer** that downstream apps can rely on
 
-- `Treasury`  
-  - Stores total deposited lamports  
-  - Used for all protocol-controlled value flows  
+### Zephyon is *not*:
 
-- `UserAccount`  
-  - One PDA per user  
-  - Tracks deposits and future staking state  
+* A wallet
+* A DEX or liquidity venue
+* A bridge
+* A speculative yield engine
+* A replacement for Solana Pay
 
-All accounts use deterministic seeds for stability, safety, and compatibility with client-side SDKs.
+Zephyon complements existing rails rather than competing with them.
 
 ---
 
-## 📂 Repository Structure
+## Core Capabilities (Implemented)
+
+The following capabilities are implemented, tested, and hardened:
+
+* **SPL Deposits** – user funds can be deposited into a protocol-controlled treasury
+* **SPL Withdrawals** – treasury withdrawals are permissioned and strictly authorized
+* **Receipt-Backed Accounting** – deposits and withdrawals can emit deterministic receipt accounts for auditability
+* **Protocol-Level Pause** – treasury-affecting operations can be paused during incidents
+* **Side-Effect Guarding** – paused state prevents unintended account creation or state mutation
+* **Explicit Authorization Enforcement** – unauthorized access paths are tested and rejected
+* **Event Emission** – core actions emit events suitable for indexing and observability
+
+These behaviors are enforced by the protocol itself and validated through both positive- and negative-path testing, forming the protocol’s core safety guarantees.
+
+---
+
+## Security & Safety Guarantees
+
+Zephyon is designed with defensive primitives at its core:
+
+* **Permissioned Treasury Control** – only authorized entities may move treasury funds
+* **Incident Response Pause** – deposits and withdrawals can be halted without redeployment
+* **Deterministic State Derivation** – PDAs are derived predictably and verified consistently
+* **Negative-Path Testing** – unauthorized actions are explicitly tested to fail
+* **Receipt Integrity** – receipt accounts provide tamper-resistant accounting records
+
+The protocol favors clear failure modes over silent or ambiguous behavior.
+
+---
+
+## High-Level Architecture
+
+At a high level, Zephyon consists of:
+
+* **Protocol State PDA** – global configuration and operational flags
+* **Treasury PDA** – custody of SPL assets under protocol control
+* **Receipt PDAs** – optional, deterministic records of value movement
+* **Authority Model** – explicit signers governing sensitive actions
+
+The architecture is intentionally minimal to reduce surface area while remaining extensible.
+
+---
+
+## Composability & Integration
+
+Zephyon is designed to work *with* the Solana ecosystem rather than replace existing components:
+
+* Compatible with standard SPL tokens
+* Composable with existing wallets (which retain key custody and signing)
+* Integrates cleanly with **Solana Pay** as a payment rail
+
+Downstream applications such as **ZephiPay** focus on user experience and payment flow, while relying on Zephyon for safety, accounting, and correctness.
+
+---
+
+## Future Direction (Non-Binding)
+
+The following areas are intentionally deferred until after MVP stabilization and real-world validation:
+
+* **Governance & Multisig Controls** – distributed authority and operational resilience
+* **Tokenomics (ZERA)** – incentive alignment and governance participation, introduced only after protocol maturity
+* **Advanced UX Layers** – payment applications such as ZephiPay
+* **Ecosystem Tooling** – indexing, analytics, and developer-facing SDKs
+
+These items represent direction, not commitments, and will evolve alongside real usage and feedback.
+
+---
+
+## Project Status
+
+Zephyon is currently in **MVP-ready** state:
+
+* Core payment and accounting paths are implemented
+* Safety mechanisms are active and tested
+* Architecture is stable and extensible
+
+Development is focused on correctness, clarity, and long-term sustainability.
+
+---
+
+## License
+
+[License information to be added]
+
+---
+
+*Zephyon Protocol is built for teams who value calm infrastructure, explicit guarantees, and systems that can grow without losing trust.*
+
 

@@ -2,6 +2,7 @@
 // tests/_helpers.ts
 import * as anchor from "@coral-xyz/anchor";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+import type { AccountInfo } from "@solana/web3.js";
 import {
   PublicKey,
   Keypair,
@@ -170,6 +171,25 @@ export const pda = {
   treasury: () => deriveTreasuryPda()[0],
   userProfileKeyOnly: (user: PublicKey) => deriveUserProfilePda(user)[0],
 };
+/** Read-only: pull raw account info (indexer-style access) */
+export async function getAccountInfoOrNull(
+  providerOrConn: AnchorProvider | Connection,
+  address: PublicKey
+): Promise<AccountInfo<Buffer> | null> {
+  const conn =
+    (providerOrConn as AnchorProvider).connection ??
+    (providerOrConn as Connection);
+
+  return await conn.getAccountInfo(address, "confirmed");
+}
+
+/** Read-only: decode Receipt from raw bytes using Anchor coder */
+export function decodeReceiptFromAccountInfo(
+  program: any,
+  info: AccountInfo<Buffer>
+) {
+  return program.coder.accounts.decode("receipt", info.data);
+}
 
 /* ─────────────────────────────────────────────────────────
  * Authority key (must match PROTOCOL_AUTHORITY above)

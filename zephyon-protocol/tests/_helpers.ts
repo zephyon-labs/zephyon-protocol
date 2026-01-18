@@ -62,6 +62,34 @@ export function toLeU64(n: BN | bigint | number): Buffer {
 
   return buf;
 }
+/** ✅ Canonical receipt PDA — SPL deposit with receipt
+ * seeds = ["receipt", user, nonce_le_u64]
+ */
+export function deriveDepositReceiptPda(
+  programId: PublicKey,
+  user: PublicKey,
+  nonce: BN | bigint | number
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("receipt"), user.toBuffer(), toLeU64(nonce)],
+    programId
+  );
+}
+
+/** ✅ Canonical receipt PDA — SPL withdraw with receipt
+ * seeds = ["receipt", user, tx_count_le_u64]
+ * NOTE: txCount must be PRE-INCREMENT snapshot (value before withdraw).
+ */
+export function deriveWithdrawReceiptPda(
+  programId: PublicKey,
+  user: PublicKey,
+  txCount: BN | bigint | number
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("receipt"), user.toBuffer(), toLeU64(txCount)],
+    programId
+  );
+}
 
 // Back-compat alias if other specs still import leU64
 export const leU64 = toLeU64;
@@ -84,32 +112,32 @@ export function deriveTreasuryPda(): [PublicKey, number] {
 }
 
 
-/** User profile PDA seeds:
- * ["user_profile", protocol_state, user_pubkey]
+/** User profile PDA seeds (canonical):
+ * ["user_profile", user_pubkey]
  */
 export function deriveUserProfilePda(user: PublicKey): [PublicKey, number] {
-  const [protocolState] = deriveProtocolStatePda();
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("user_profile"), protocolState.toBuffer(), user.toBuffer()],
+    [Buffer.from("user_profile"), user.toBuffer()],
     PROGRAM_ID()
   );
 }
 
-/** Canonical 3-arg variant (used by some SPL tests) */
+
+/** Canonical 2-arg seed variant */
 export function deriveUserProfilePdaV3(
   programId: PublicKey,
-  protocolState: PublicKey,
   user: PublicKey
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("user_profile"), protocolState.toBuffer(), user.toBuffer()],
+    [Buffer.from("user_profile"), user.toBuffer()],
     programId
   );
 }
 
-/** ✅ Receipt PDA — canonical for Core12:
- * ["receipt", user_profile.key(), tx_count.to_le_bytes()]
- * NOTE: txCount must be PRE-INCREMENT snapshot (value before deposit).
+
+/** ⚠️ LEGACY receipt PDA (old schema; keep only if older specs still use it)
+ * Old seeds = ["receipt", user_profile, tx_count_le_u64]
+ * Current program uses ["receipt", user, <u64>] for both deposit+withdraw receipts.
  */
 export function deriveReceiptPdaByUserProfile(
   programId: PublicKey,
@@ -122,10 +150,11 @@ export function deriveReceiptPdaByUserProfile(
   );
 }
 
-/** ❌ DEPRECATED — Do NOT use for Core12 receipts.
- * Kept only to avoid breaking older specs.
- * Your program does NOT derive receipts by user pubkey.
+/** ⚠️ Generic receipt PDA by user + le_u64
+ * seeds = ["receipt", user, le_u64]
+ * Prefer deriveDepositReceiptPda / deriveWithdrawReceiptPda for clarity.
  */
+
 export function deriveReceiptPdaByUser(
   user: PublicKey,
   leTxCount: Buffer

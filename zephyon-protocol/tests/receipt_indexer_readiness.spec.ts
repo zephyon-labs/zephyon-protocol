@@ -38,7 +38,7 @@ describe("protocol - receipt indexer readiness (Core15.2)", () => {
 
     const [receiptPda] = deriveDepositReceiptPda(program.programId, payer.publicKey, nonce);
 
-    await program.methods
+    const sig = await program.methods
       .splDepositWithReceipt(new anchor.BN(amount), new anchor.BN(nonce))
       .accounts({
         user: payer.publicKey,
@@ -54,6 +54,8 @@ describe("protocol - receipt indexer readiness (Core15.2)", () => {
       } as any)
       .signers([payer])
       .rpc();
+
+    await provider.connection.confirmTransaction(sig, "confirmed");
 
     // Indexer-style: raw fetch
     const info = await getAccountInfoOrNull(provider, receiptPda);

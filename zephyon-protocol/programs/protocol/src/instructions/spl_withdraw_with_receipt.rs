@@ -13,7 +13,8 @@ use crate::state::{Receipt, ReceiptV2Ext, Treasury, UserProfile};
 pub struct SplWithdrawWithReceipt<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
-    /// CHECK: must match treasury.authority
+
+    /// Must match treasury.authority (admin signer)
     pub treasury_authority: Signer<'info>,
 
     #[account(
@@ -28,7 +29,8 @@ pub struct SplWithdrawWithReceipt<'info> {
     #[account(
         mut,
         seeds = [b"treasury"],
-        bump = treasury.bump
+        bump = treasury.bump,
+        constraint = !treasury.paused @ ErrorCode::ProtocolPaused
     )]
     pub treasury: Account<'info, Treasury>,
 
@@ -38,14 +40,18 @@ pub struct SplWithdrawWithReceipt<'info> {
         init_if_needed,
         payer = user,
         associated_token::mint = mint,
-        associated_token::authority = user
+        associated_token::authority = user,
+        constraint = user_ata.owner == user.key() @ ErrorCode::InvalidUserTokenAccountOwner,
+        constraint = user_ata.mint == mint.key() @ ErrorCode::InvalidMint
     )]
     pub user_ata: Account<'info, TokenAccount>,
 
     #[account(
         mut,
         associated_token::mint = mint,
-        associated_token::authority = treasury
+        associated_token::authority = treasury,
+        constraint = treasury_ata.owner == treasury.key() @ ErrorCode::InvalidTreasuryTokenAccountOwner,
+        constraint = treasury_ata.mint == mint.key() @ ErrorCode::InvalidMint
     )]
     pub treasury_ata: Account<'info, TokenAccount>,
 
@@ -54,7 +60,6 @@ pub struct SplWithdrawWithReceipt<'info> {
         payer = user,
         space = 8 + Receipt::LEN,
         seeds = [b"receipt", user.key().as_ref(), &user_profile.tx_count.to_le_bytes()],
-
         bump
     )]
     pub receipt: Account<'info, Receipt>,
@@ -66,24 +71,32 @@ pub struct SplWithdrawWithReceipt<'info> {
 }
 
 pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> {
-    require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
     require!(amount > 0, ErrorCode::InvalidAmount);
 
-    // If profile is fresh, initialize it cleanly.
+    // Initialize or verify user_profile ownership.
     if ctx.accounts.user_profile.authority == Pubkey::default() {
         ctx.accounts.user_profile.authority = ctx.accounts.user.key();
         ctx.accounts.user_profile.tx_count = 0;
         ctx.accounts.user_profile.bump = ctx.bumps.user_profile;
+    } else {
+        require_keys_eq!(
+            ctx.accounts.user_profile.authority,
+            ctx.accounts.user.key(),
+            ErrorCode::InvalidUserProfileAuthority
+        );
     }
+
+    // Admin gate: must be treasury authority
     require_keys_eq!(
         ctx.accounts.treasury_authority.key(),
         ctx.accounts.treasury.authority,
         ErrorCode::UnauthorizedWithdraw
     );
 
+    // Pre-increment tx_count (used for seed + receipt invariant)
     let tx_count = ctx.accounts.user_profile.tx_count;
 
-    // Treasury signs out
+    // Treasury PDA signs the token transfer
     let bump = ctx.accounts.treasury.bump;
     let seeds: &[&[u8]] = &[b"treasury", &[bump]];
     let signer = &[seeds];
@@ -102,9 +115,8 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
 
     token::transfer(cpi_ctx, amount)?;
 
-    // Receipt
+    // Write receipt (tx_count must reflect PRE-increment)
     let r = &mut ctx.accounts.receipt;
-
     r.user = ctx.accounts.user.key();
     r.direction = Receipt::DIR_WITHDRAW;
     r.asset_kind = Receipt::ASSET_SPL;
@@ -118,7 +130,11 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
     r.bump = ctx.bumps.receipt;
     r.v2 = ReceiptV2Ext::spl(ctx.accounts.mint.key());
 
-    ctx.accounts.user_profile.tx_count = ctx.accounts.user_profile.tx_count.saturating_add(1);
+    // Increment AFTER receipt is written
+    ctx.accounts.user_profile.tx_count = ctx.accounts
+        .user_profile
+        .tx_count
+        .saturating_add(1);
 
     let slot = Clock::get()?.slot;
 
@@ -129,7 +145,7 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
         amount,
         treasury: ctx.accounts.treasury.key(),
         receipt: ctx.accounts.receipt.key(),
-        nonce_or_tx: ctx.accounts.user_profile.tx_count, // OR tx_count used for seed
+        nonce_or_tx: tx_count, // <- pre-increment (matches receipt seed invariant)
         xp_delta: 1,
         risk_flags: 0,
         slot,
@@ -137,3 +153,4 @@ pub fn handler(ctx: Context<SplWithdrawWithReceipt>, amount: u64) -> Result<()> 
 
     Ok(())
 }
+

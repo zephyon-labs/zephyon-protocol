@@ -13,6 +13,10 @@ pub enum ErrorCode {
 
     #[msg("Only the treasury authority may pause/unpause.")]
     UnauthorizedPause,
+
+    #[msg("User profile authority does not match the signer.")]
+    InvalidUserProfileAuthority,
+
     #[msg("User token account owner mismatch.")]
     InvalidUserTokenAccountOwner,
 

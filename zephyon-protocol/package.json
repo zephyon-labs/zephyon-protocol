@@ -4,6 +4,8 @@
   "private": true,
   "license": "MIT",
   
+
+  
   "scripts": {
     "test": "TS_NODE_TRANSPILE_ONLY=1 ts-mocha -p tsconfig.json -r ts-node/register -t 1000000 --exclude \"tests/_hold/**\" --exclude \"tests_legacy/**\" \"tests/**/*.spec.ts\""
   },

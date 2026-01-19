@@ -35,7 +35,9 @@ pub struct SplWithdraw<'info> {
         init_if_needed,
         payer = treasury_authority,
         associated_token::mint = mint,
-        associated_token::authority = user
+        associated_token::authority = user,
+        constraint = user_ata.owner == user.key() @ ErrorCode::InvalidUserTokenAccountOwner,
+        constraint = user_ata.mint == mint.key() @ ErrorCode::InvalidMint
     )]
     pub user_ata: Account<'info, TokenAccount>,
 
@@ -43,7 +45,9 @@ pub struct SplWithdraw<'info> {
     #[account(
         mut,
         associated_token::mint = mint,
-        associated_token::authority = treasury
+        associated_token::authority = treasury,
+        constraint = treasury_ata.owner == treasury.key() @ ErrorCode::InvalidTreasuryTokenAccountOwner,
+        constraint = treasury_ata.mint == mint.key() @ ErrorCode::InvalidMint
     )]
     pub treasury_ata: Account<'info, TokenAccount>,
 

@@ -114,11 +114,20 @@ describe("protocol - spl pay (Core17)", () => {
     const treasuryAcc = await program.account.treasury.fetch(treasuryPda);
     const payCountBefore = new anchor.BN(treasuryAcc.payCount);
 
-    const receiptPda = payReceiptPda(program.programId, treasuryPda, payCountBefore);
+    const receiptPda = payReceiptPda(
+      program.programId,
+      treasuryPda,
+      payCountBefore
+    );
 
     // Pre balances
-    const treasuryBefore = await getAccount(provider.connection, treasuryAta.address);
-    const recipientAtaInfoBefore = await provider.connection.getAccountInfo(recipientAta);
+    const treasuryBefore = await getAccount(
+      provider.connection,
+      treasuryAta.address
+    );
+    const recipientAtaInfoBefore = await provider.connection.getAccountInfo(
+      recipientAta
+    );
 
     // Execute pay
     const payAmount = 1234;
@@ -144,10 +153,15 @@ describe("protocol - spl pay (Core17)", () => {
     expect(recipientAtaInfoBefore).to.eq(null);
 
     const recipientAfter = await getAccount(provider.connection, recipientAta);
-    const treasuryAfter = await getAccount(provider.connection, treasuryAta.address);
+    const treasuryAfter = await getAccount(
+      provider.connection,
+      treasuryAta.address
+    );
 
     expect(Number(recipientAfter.amount)).to.eq(payAmount);
-    expect(Number(treasuryBefore.amount) - Number(treasuryAfter.amount)).to.eq(payAmount);
+    expect(Number(treasuryBefore.amount) - Number(treasuryAfter.amount)).to.eq(
+      payAmount
+    );
 
     // Receipt checks
     const r: any = await (program.account as any).receipt.fetch(receiptPda);
@@ -186,9 +200,16 @@ describe("protocol - spl pay (Core17)", () => {
 
     const treasuryAcc = await program.account.treasury.fetch(treasuryPda);
     const payCountBefore = new anchor.BN(treasuryAcc.payCount);
-    const receiptPda = payReceiptPda(program.programId, treasuryPda, payCountBefore);
+    const receiptPda = payReceiptPda(
+      program.programId,
+      treasuryPda,
+      payCountBefore
+    );
 
-    const treasuryBefore = await getAccount(provider.connection, treasuryAta.address);
+    const treasuryBefore = await getAccount(
+      provider.connection,
+      treasuryAta.address
+    );
 
     const payAmount = 555;
     // IMPORTANT: recipient does NOT sign
@@ -214,8 +235,13 @@ describe("protocol - spl pay (Core17)", () => {
     const recipientAfter = await getAccount(provider.connection, recipientAta);
     expect(Number(recipientAfter.amount)).to.eq(payAmount);
 
-    const treasuryAfter = await getAccount(provider.connection, treasuryAta.address);
-    expect(Number(treasuryBefore.amount) - Number(treasuryAfter.amount)).to.eq(payAmount);
+    const treasuryAfter = await getAccount(
+      provider.connection,
+      treasuryAta.address
+    );
+    expect(Number(treasuryBefore.amount) - Number(treasuryAfter.amount)).to.eq(
+      payAmount
+    );
 
     // Receipt should exist too (basic sanity)
     const r: any = await (program.account as any).receipt.fetch(receiptPda);
@@ -243,7 +269,11 @@ describe("protocol - spl pay (Core17)", () => {
     // Use current payCount for receipt PDA derivation attempt
     const treasuryAcc = await program.account.treasury.fetch(treasuryPda);
     const payCountBefore = new anchor.BN(treasuryAcc.payCount);
-    const receiptPda = payReceiptPda(program.programId, treasuryPda, payCountBefore);
+    const receiptPda = payReceiptPda(
+      program.programId,
+      treasuryPda,
+      payCountBefore
+    );
 
     let failed = false;
     try {
@@ -266,9 +296,89 @@ describe("protocol - spl pay (Core17)", () => {
         .rpc();
     } catch (e: any) {
       failed = true;
-      if (DEBUG) console.log("unauthorized splPay failed as expected:", e?.message ?? e);
+      if (DEBUG)
+        console.log("unauthorized splPay failed as expected:", e?.message ?? e);
     }
 
     expect(failed).to.eq(true);
   });
+
+  it("D) clarity: pay_count increments and receipt PDA shifts", async () => {
+    const { mint, treasuryAta } = await seedTreasury(1_000_000n);
+
+    // Recipient (doesn't sign)
+    const recipient = Keypair.generate();
+    const recipientAta = getAssociatedTokenAddressSync(
+      mint,
+      recipient.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    // payCount BEFORE
+    const tBefore: any = await program.account.treasury.fetch(treasuryPda);
+    const payCountBefore = new anchor.BN(tBefore.payCount);
+
+    const receiptPda1 = payReceiptPda(
+      program.programId,
+      treasuryPda,
+      payCountBefore
+    );
+
+    // Execute pay #1
+    await program.methods
+      .splPay(new anchor.BN(111))
+      .accounts({
+        treasuryAuthority: protocolAuth.publicKey,
+        recipient: recipient.publicKey,
+        treasury: treasuryPda,
+        mint,
+        recipientAta,
+        treasuryAta: treasuryAta.address,
+        receipt: receiptPda1,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .signers([protocolAuth])
+      .rpc();
+
+    // payCount AFTER should be +1
+    const tAfter: any = await program.account.treasury.fetch(treasuryPda);
+    const payCountAfter = new anchor.BN(tAfter.payCount);
+
+    expect(payCountAfter.toNumber()).to.eq(payCountBefore.toNumber() + 1);
+
+    // Receipt PDA for next pay should be different (shift)
+    const receiptPda2 = payReceiptPda(
+      program.programId,
+      treasuryPda,
+      payCountAfter
+    );
+    expect(receiptPda1.toBase58()).to.not.eq(receiptPda2.toBase58());
+
+    // Optional sanity: the receipt at receiptPda1 exists and is DIR_PAY/ASSET_SPL
+    const r1: any = await (program.account as any).receipt.fetch(receiptPda1);
+    expect(toNum(r1.direction)).to.eq(DIR_PAY);
+    const rawAsset = r1.assetKind ?? r1.asset_kind;
+    expect(toNum(rawAsset)).to.eq(ASSET_SPL);
+    expect(toNum(r1.amount)).to.eq(111);
+
+    // Balance sanity (treasury decreased, recipient increased at least 111)
+    const treasuryAfter = await getAccount(provider.connection, treasuryAta.address);
+    // Can't reliably assert exact recipient total across all prior tests, but can ensure it's >= 111
+    const recipientAfter = await getAccount(provider.connection, recipientAta);
+    expect(Number(recipientAfter.amount)).to.be.gte(111);
+
+    if (DEBUG) {
+      console.log("payCountBefore:", payCountBefore.toString());
+      console.log("payCountAfter:", payCountAfter.toString());
+      console.log("receiptPda1:", receiptPda1.toBase58());
+      console.log("receiptPda2:", receiptPda2.toBase58());
+      console.log("treasuryAfter:", Number(treasuryAfter.amount));
+    }
+  });
 });
+

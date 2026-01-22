@@ -19,6 +19,14 @@ import {
   mintTo,
 } from "@solana/spl-token";
 
+// Canon enums mirrored from Rust state/receipt.rs
+export const DIR_DEPOSIT = 1;
+export const DIR_WITHDRAW = 2;
+export const DIR_PAY = 3;
+
+export const ASSET_UNKNOWN = 0;
+export const ASSET_SOL = 1;
+export const ASSET_SPL = 2;
 // Optional type import if you generated types
 // import type { Protocol } from "../target/types/protocol";
 
@@ -44,6 +52,7 @@ export function getProgram(): Program<any> {
 export function PROGRAM_ID(): PublicKey {
   return getProgram().programId;
 }
+
 
 /* ─────────────────────────────────────────────────────────
  * Utils
@@ -91,6 +100,30 @@ export function deriveWithdrawReceiptPda(
     programId
   );
 }
+
+export function deriveReceiptPdaV2(args: {
+  program: anchor.Program;
+  treasury: PublicKey;
+  user: PublicKey;
+  mint: PublicKey;
+  txCount: bigint | number;
+  direction: number; // 0 deposit, 1 withdraw, 2 pay
+}): [PublicKey, number] {
+  const { program, treasury, user, mint, txCount, direction } = args;
+
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("receipt"),
+      treasury.toBuffer(),
+      user.toBuffer(),
+      mint.toBuffer(),
+      toLeU64(txCount),
+      Buffer.from([direction]),
+    ],
+    program.programId
+  );
+}
+
 
 // Back-compat alias if other specs still import leU64
 export const leU64 = toLeU64;

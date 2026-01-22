@@ -1,7 +1,12 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
-import { loadProtocolAuthority, airdrop } from "./_helpers";
+import {
+  loadProtocolAuthority,
+  airdrop,
+  DIR_DEPOSIT,
+  ASSET_SPL,
+} from "./_helpers";
 
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -34,8 +39,12 @@ function depositReceiptPda(
 
 // Nonce generator that avoids PDA collisions across repeated test runs
 function makeUniqueNonce(): anchor.BN {
-  // ms timestamp fits in u64 for a long time; wrap as BN
   return new anchor.BN(Date.now());
+}
+
+function toNum(v: any): number {
+  if (v instanceof anchor.BN) return v.toNumber();
+  return Number(v);
 }
 
 describe("protocol - spl deposit with receipt", () => {
@@ -78,7 +87,7 @@ describe("protocol - spl deposit with receipt", () => {
       treasuryPda,
       true
     );
-    // --- Ensure treasury is initialized
+
     // --- Ensure treasury is initialized (MUST be protocol authority, not payer)
     const protocolAuth = loadProtocolAuthority();
     await airdrop(provider, protocolAuth.publicKey, 2);
@@ -93,10 +102,9 @@ describe("protocol - spl deposit with receipt", () => {
         } as any)
         .signers([protocolAuth])
         .rpc();
-    } catch (e) {
+    } catch (_e) {
       // Treasury likely already exists — safe to ignore
     }
-
 
     // --- Seed user funds
     const amount = 1_000_000;
@@ -131,17 +139,40 @@ describe("protocol - spl deposit with receipt", () => {
     // --- Receipt exists + basic correctness
     const r: any = await (program.account as any).receipt.fetch(receiptPda);
 
-    const rAmount = r.amount instanceof anchor.BN ? r.amount.toNumber() : Number(r.amount);
-    if (rAmount !== amount) throw new Error("receipt amount mismatch");
 
-    const dir = r.direction instanceof anchor.BN ? r.direction.toNumber() : Number(r.direction);
-    // Deposit direction should be 0 in your earlier convention
-    if (dir !== 0) throw new Error("receipt direction mismatch");
+    const rr = r;
 
-    // --- Balance check
+
+  // amount
+  const rawAmount = rr.amount;
+  const rAmount = toNum(rawAmount);
+
+  if (rAmount !== amount) {
+    const fee = toNum(rr.fee);
+    const pre = toNum(rr.preBalance);
+    const post = toNum(rr.postBalance);
+    throw new Error(
+      `receipt amount mismatch: got=${rAmount} expected=${amount} raw=${rawAmount} fee=${fee} pre=${pre} post=${post}`
+    );
+  }
+
+  // asset_kind
+  const rawAsset = rr.assetKind ?? rr.asset_kind;
+  const asset = toNum(rawAsset);
+  if (asset !== ASSET_SPL) {
+    throw new Error(`receipt asset_kind mismatch: got=${asset} expected=${ASSET_SPL}`);
+  }
+
+    // direction
+    const dir = toNum(rr.direction);
+    if (dir !== DIR_DEPOSIT) {
+      throw new Error(`receipt direction mismatch: got=${dir} expected=${DIR_DEPOSIT}`);
+  }
     const userAfter = await getAccount(provider.connection, userAta.address);
     const treasuryAfter = await getAccount(provider.connection, treasuryAtaAddr);
 
+
+    
     if (Number(userBefore.amount) - Number(userAfter.amount) !== amount) {
       throw new Error("user ATA did not decrease by expected amount");
     }
@@ -150,4 +181,6 @@ describe("protocol - spl deposit with receipt", () => {
     }
   });
 });
+
+
 

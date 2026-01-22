@@ -11,6 +11,8 @@ pub struct InitializeTreasury<'info> {
         payer = authority,
         seeds = [b"treasury"],
         bump,
+        
+
         space = Treasury::INIT_SPACE
     )]
     pub treasury: Account<'info, Treasury>,
@@ -24,6 +26,8 @@ pub fn handler(ctx: Context<InitializeTreasury>) -> Result<()> {
     treasury.authority = ctx.accounts.authority.key();
     treasury.paused = false;
     treasury.bump = ctx.bumps.treasury;
+    treasury.pay_count = 0;
+
 
     Ok(())
 }

@@ -5,8 +5,9 @@ pub struct Receipt {
     /// User wallet (NOT the user_profile PDA)
     pub user: Pubkey,
 
-    /// 0 = deposit, 1 = withdraw
+    /// 0 = deposit, 1 = withdraw, 2 = pay
     pub direction: u8,
+
 
     /// 0 = SOL, 1 = SPL
     pub asset_kind: u8,
@@ -40,11 +41,14 @@ pub struct Receipt {
 }
 
 impl Receipt {
-    pub const DIR_DEPOSIT: u8 = 0;
-    pub const DIR_WITHDRAW: u8 = 1;
+    pub const DIR_DEPOSIT: u8 = 1;
+    pub const DIR_WITHDRAW: u8 = 2;
+    pub const DIR_PAY: u8 = 3;
 
-    pub const ASSET_SOL: u8 = 0;
-    pub const ASSET_SPL: u8 = 1;
+    pub const ASSET_UNKNOWN: u8 = 0;
+    pub const ASSET_SOL: u8 = 1;
+    pub const ASSET_SPL: u8 = 2;
+
 
     /// Space excluding the 8-byte discriminator (Anchor adds that separately in init via `space = 8 + ...`)
     pub const LEN: usize = 32 + // user
@@ -59,6 +63,31 @@ impl Receipt {
         8  + // tx_count
         1  + // bump
         ReceiptV2Ext::LEN;
+
+    /// Canonical PDA seeds for all receipts
+    pub const RECEIPT_SEED: &[u8] = b"receipt";
+
+    /// Canonical receipt PDA derivation
+    /// MUST be mirrored exactly in tests/helpers
+    pub fn receipt_seeds<'a>(
+        treasury: &'a Pubkey,
+        user: &'a Pubkey,
+        mint: &'a Pubkey,
+        tx_count: &'a [u8; 8],
+        direction_seed: &'a [u8; 1],
+    ) -> [&'a [u8]; 6] {
+      [
+        Receipt::RECEIPT_SEED.as_ref(),
+
+        treasury.as_ref(),
+        user.as_ref(),
+        mint.as_ref(),
+        tx_count.as_ref(),
+        direction_seed.as_ref(),
+      ]
+    }
+
+
 
     /// Convenience for `space = 8 + Receipt::LEN`
     pub const SPACE: usize = 8 + Self::LEN;

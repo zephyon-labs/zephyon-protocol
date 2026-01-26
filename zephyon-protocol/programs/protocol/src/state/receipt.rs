@@ -93,7 +93,7 @@ impl Receipt {
     pub const SPACE: usize = 8 + Self::LEN;
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, Default)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct ReceiptV2Ext {
     /// Reserved flags for future (bitfield)
     pub flags: u16,
@@ -101,15 +101,31 @@ pub struct ReceiptV2Ext {
     /// Optional: keep if you want future-proof explicit SPL mint storage.
     /// Redundant with `mint`, but harmless.
     pub spl_mint: Pubkey,
+
+    /// Optional 32-byte reference (invoice/order id hash, etc.)
+    /// Zeroed when absent.
+    pub reference: [u8; 32],
+
+    /// Memo length (0..=64). Zero when absent.
+    pub memo_len: u8,
+
+    /// Memo bytes (UTF-8 or arbitrary). Only first memo_len bytes are meaningful.
+    pub memo: [u8; 64],
 }
 
 impl ReceiptV2Ext {
-    pub const LEN: usize = 2 + 32;
+    pub const FLAG_HAS_REFERENCE: u16 = 1 << 0;
+    pub const FLAG_HAS_MEMO: u16 = 1 << 1;
+
+    pub const LEN: usize = 2 + 32 + 32 + 1 + 64;
 
     pub fn sol() -> Self {
         Self {
             flags: 0,
             spl_mint: Pubkey::default(),
+            reference: [0u8; 32],
+            memo_len: 0,
+            memo: [0u8; 64],
         }
     }
 
@@ -117,10 +133,41 @@ impl ReceiptV2Ext {
         Self {
             flags: 0,
             spl_mint: mint,
+            reference: [0u8; 32],
+            memo_len: 0,
+            memo: [0u8; 64],
         }
+    }
+
+    pub fn spl_with_meta(mint: Pubkey, reference: Option<[u8; 32]>, memo: Option<&[u8]>) -> Self {
+        let mut ext = Self::spl(mint);
+
+        if let Some(r) = reference {
+            ext.flags |= Self::FLAG_HAS_REFERENCE;
+            ext.reference = r;
+        }
+
+        if let Some(m) = memo {
+            ext.flags |= Self::FLAG_HAS_MEMO;
+            ext.memo_len = m.len() as u8;
+            ext.memo[..m.len()].copy_from_slice(m);
+        }
+
+        ext
     }
 }
 
+impl Default for ReceiptV2Ext {
+    fn default() -> Self {
+        Self {
+            flags: 0,
+            spl_mint: Pubkey::default(),
+            reference: [0u8; 32],
+            memo_len: 0,
+            memo: [0u8; 64],
+        }
+    }
+}
 #[event]
 pub struct ReceiptCreated {
     pub user: Pubkey,

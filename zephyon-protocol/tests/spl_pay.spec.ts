@@ -64,6 +64,10 @@ describe("protocol - spl pay (Core17)", () => {
   let treasuryPda: anchor.web3.PublicKey;
   let protocolAuth: Keypair;
 
+  const V2_FLAG_HAS_REFERENCE = 1 << 0;
+  const V2_FLAG_HAS_MEMO = 1 << 1;
+
+
   before(async () => {
    program = getProgram() as anchor.Program<Protocol>;
 
@@ -150,7 +154,7 @@ describe("protocol - spl pay (Core17)", () => {
     // Execute pay
     const payAmount = 1234;
     await program.methods
-      .splPay(new anchor.BN(payAmount))
+      .splPay(new anchor.BN(payAmount), null, null)
       .accounts({
         treasuryAuthority: protocolAuth.publicKey,
         recipient: recipient.publicKey,
@@ -232,7 +236,7 @@ describe("protocol - spl pay (Core17)", () => {
     const payAmount = 555;
     // IMPORTANT: recipient does NOT sign
     await program.methods
-      .splPay(new anchor.BN(payAmount))
+      .splPay(new anchor.BN(payAmount), null, null)
       .accounts({
         treasuryAuthority: protocolAuth.publicKey,
         recipient: recipient.publicKey,
@@ -296,7 +300,7 @@ describe("protocol - spl pay (Core17)", () => {
     let failed = false;
     try {
       await program.methods
-        .splPay(new anchor.BN(1))
+        .splPay(new anchor.BN(1), null, null)
         .accounts({
           treasuryAuthority: funder.publicKey, // WRONG signer
           recipient: attacker.publicKey,
@@ -346,7 +350,7 @@ describe("protocol - spl pay (Core17)", () => {
 
     // Execute pay #1
     await program.methods
-      .splPay(new anchor.BN(111))
+      .splPay(new anchor.BN(111), null, null)
       .accounts({
         treasuryAuthority: protocolAuth.publicKey,
         recipient: recipient.publicKey,
@@ -417,7 +421,7 @@ describe("protocol - spl pay (Core17)", () => {
 
     await expectFail(
       program.methods
-        .splPay(new anchor.BN(0))
+        .splPay(new anchor.BN(0), null, null)
         .accounts({
           treasuryAuthority: protocolAuth.publicKey,
           recipient: recipient.publicKey,
@@ -472,7 +476,7 @@ describe("protocol - spl pay (Core17)", () => {
 
     await expectFail(
       program.methods
-        .splPay(new anchor.BN(1))
+        .splPay(new anchor.BN(1), null, null)
         .accounts({
           treasuryAuthority: protocolAuth.publicKey,
           recipient: recipient.publicKey,
@@ -521,7 +525,7 @@ describe("protocol - spl pay (Core17)", () => {
     // try to pay more than treasury has
     await expectFail(
       program.methods
-        .splPay(new anchor.BN(101))
+        .splPay(new anchor.BN(101), null, null)
         .accounts({
           treasuryAuthority: protocolAuth.publicKey,
           recipient: recipient.publicKey,
@@ -563,7 +567,7 @@ describe("protocol - spl pay (Core17)", () => {
 
     const payAmount = 777;
     await program.methods
-      .splPay(new anchor.BN(payAmount))
+      .splPay(new anchor.BN(payAmount), null, null)
       .accounts({
         treasuryAuthority: protocolAuth.publicKey,
         recipient: protocolAuth.publicKey,
@@ -592,6 +596,145 @@ describe("protocol - spl pay (Core17)", () => {
       expect(afterInfo).to.not.eq(null);
     }
   });
+
+  it("Core21) splPay writes reference + memo metadata into receipt.v2", async () => {
+  const { mint, treasuryAta } = await seedTreasury(1_000_000n);
+
+  const recipient = Keypair.generate();
+  const recipientAta = getAssociatedTokenAddressSync(
+    mint,
+    recipient.publicKey,
+    false,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  const treasuryAcc = await program.account.treasury.fetch(treasuryPda);
+  const payCountBefore = new anchor.BN(treasuryAcc.payCount);
+  const receiptPda = payReceiptPda(program.programId, treasuryPda, payCountBefore);
+
+  const reference = Buffer.from(new Uint8Array(32).fill(7));
+
+  const memo = Buffer.from("invoice:1234|core21", "utf8");
+
+
+  await program.methods
+    .splPay(new anchor.BN(777), Array.from(reference), memo)
+
+
+    .accounts({
+      treasuryAuthority: protocolAuth.publicKey,
+      recipient: recipient.publicKey,
+      treasury: treasuryPda,
+      mint,
+      recipientAta,
+      treasuryAta: treasuryAta.address,
+      receipt: receiptPda,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    } as any)
+    .signers([protocolAuth])
+    .rpc();
+
+  const r: any = await (program.account as any).receipt.fetch(receiptPda);
+
+  expect(toNum(r.v2.flags)).to.eq(V2_FLAG_HAS_REFERENCE | V2_FLAG_HAS_MEMO);
+  expect(Array.from(r.v2.reference)).to.deep.eq(Array.from(reference));
+  expect(toNum(r.v2.memoLen)).to.eq(memo.length);
+
+  const gotMemo = Uint8Array.from(r.v2.memo).slice(0, toNum(r.v2.memoLen));
+  expect(Array.from(gotMemo)).to.deep.eq(Array.from(memo));
+});
+
+it("Core21) splPay with null metadata stores empty v2 fields", async () => {
+  const { mint, treasuryAta } = await seedTreasury(1_000_000n);
+
+  const recipient = Keypair.generate();
+  const recipientAta = getAssociatedTokenAddressSync(
+    mint,
+    recipient.publicKey,
+    false,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  const treasuryAcc = await program.account.treasury.fetch(treasuryPda);
+  const payCountBefore = new anchor.BN(treasuryAcc.payCount);
+  const receiptPda = payReceiptPda(program.programId, treasuryPda, payCountBefore);
+
+  await program.methods
+    .splPay(new anchor.BN(42), null, null)
+    .accounts({
+      treasuryAuthority: protocolAuth.publicKey,
+      recipient: recipient.publicKey,
+      treasury: treasuryPda,
+      mint,
+      recipientAta,
+      treasuryAta: treasuryAta.address,
+      receipt: receiptPda,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    } as any)
+    .signers([protocolAuth])
+    .rpc();
+
+  const r: any = await (program.account as any).receipt.fetch(receiptPda);
+
+  expect(toNum(r.v2.flags)).to.eq(0);
+  expect(toNum(r.v2.memoLen)).to.eq(0);
+  expect(Array.from(r.v2.reference)).to.deep.eq(Array.from(new Uint8Array(32)));
+});
+
+it("Core21) splPay rejects memo > 64 bytes", async () => {
+  const { mint, treasuryAta } = await seedTreasury(1_000_000n);
+
+  const recipient = Keypair.generate();
+  const recipientAta = getAssociatedTokenAddressSync(
+    mint,
+    recipient.publicKey,
+    false,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  const treasuryAcc = await program.account.treasury.fetch(treasuryPda);
+  const payCountBefore = new anchor.BN(treasuryAcc.payCount);
+  const receiptPda = payReceiptPda(program.programId, treasuryPda, payCountBefore);
+
+  const reference = new Uint8Array(32).fill(1);
+  const tooLongMemo = new Uint8Array(65).fill(9);
+
+  let threw = false;
+  try {
+    await program.methods
+      .splPay(new anchor.BN(1), Array.from(reference), Buffer.from(tooLongMemo))
+
+      .accounts({
+        treasuryAuthority: protocolAuth.publicKey,
+        recipient: recipient.publicKey,
+        treasury: treasuryPda,
+        mint,
+        recipientAta,
+        treasuryAta: treasuryAta.address,
+        receipt: receiptPda,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .signers([protocolAuth])
+      .rpc();
+  } catch (e: any) {
+    threw = true;
+    expect(String(e).toLowerCase()).to.include("memo too long");
+  }
+  expect(threw).to.eq(true);
+});
+
 
 });
 

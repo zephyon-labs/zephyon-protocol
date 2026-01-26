@@ -28,4 +28,9 @@ pub enum ErrorCode {
 
     #[msg("Insufficient funds.")]
     InsufficientFunds,
+        
+    #[msg("Memo too long.")]
+    MemoTooLong,
+
+
 }

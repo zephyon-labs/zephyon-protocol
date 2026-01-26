@@ -78,8 +78,14 @@ pub mod protocol {
         instructions::spl_withdraw_with_receipt::handler(ctx, amount)
     }
 
-    pub fn spl_pay(ctx: Context<SplPay>, amount: u64) -> Result<()> {
-        instructions::spl_pay::handler(ctx, amount)
-    }
+    pub fn spl_pay(
+    ctx: Context<SplPay>,
+    amount: u64,
+    reference: Option<[u8; 32]>,
+    memo: Option<Vec<u8>>,
+  ) -> Result<()> {
+    instructions::spl_pay::handler(ctx, amount, reference, memo)
+ }
+
 }
 

@@ -6,9 +6,11 @@ use anchor_spl::{
 
 use crate::errors::ErrorCode;
 use crate::state::{Receipt, ReceiptV2Ext, Treasury};
+const MEMO_MAX: usize = 64;
 
 #[derive(Accounts)]
-#[instruction(amount: u64)]
+#[instruction(amount: u64, reference: Option<[u8; 32]>, memo: Option<Vec<u8>>)]
+
 pub struct SplPay<'info> {
     /// Treasury authority allowed to initiate payments
     #[account(mut)]
@@ -67,9 +69,19 @@ pub struct SplPay<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
-pub fn handler(ctx: Context<SplPay>, amount: u64) -> Result<()> {
+pub fn handler(
+    ctx: Context<SplPay>,
+    amount: u64,
+    reference: Option<[u8; 32]>,
+    memo: Option<Vec<u8>>,
+) -> Result<()> {
+
     require!(amount > 0, ErrorCode::InvalidAmount);
     require!(!ctx.accounts.treasury.paused, ErrorCode::ProtocolPaused);
+    if let Some(ref m) = memo {
+        require!(m.len() <= MEMO_MAX, ErrorCode::MemoTooLong);
+    }
+
 
     // Authority gate
     require_keys_eq!(
@@ -112,7 +124,9 @@ pub fn handler(ctx: Context<SplPay>, amount: u64) -> Result<()> {
     r.ts = Clock::get()?.unix_timestamp;
     r.tx_count = pay_count_before; // use tx_count field as "payment index"
     r.bump = ctx.bumps.receipt;
-    r.v2 = ReceiptV2Ext::spl(ctx.accounts.mint.key());
+    let memo_slice = memo.as_deref(); // Option<&[u8]>
+    r.v2 = ReceiptV2Ext::spl_with_meta(ctx.accounts.mint.key(), reference, memo_slice);
+
 
     // Increment pay_count after
     ctx.accounts.treasury.pay_count = ctx.accounts.treasury.pay_count.saturating_add(1);

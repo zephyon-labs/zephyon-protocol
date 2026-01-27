@@ -42,3 +42,22 @@ pub struct WithdrawEvent {
 
     pub slot: u64,
 }
+#[event]
+pub struct SplPayEvent {
+    pub pay_count: u64,
+
+    pub treasury: Pubkey,
+    pub payer: Pubkey,
+    pub recipient: Pubkey,
+
+    pub mint: Pubkey,
+    pub amount: u64,
+
+    pub has_reference: bool,
+    pub reference: [u8; 32],
+
+    pub has_memo: bool,
+    pub memo_len: u8,
+
+    pub unix_timestamp: i64,
+}

@@ -3,6 +3,7 @@ import { AnchorProvider } from "@coral-xyz/anchor";
 import { Keypair, SystemProgram, PublicKey } from "@solana/web3.js";
 import { expect } from "chai";
 import { Protocol } from "../target/types/protocol";
+import { EventParser } from "@coral-xyz/anchor";
 
 import {
   TOKEN_PROGRAM_ID,
@@ -23,6 +24,13 @@ import {
 } from "./_helpers";
 
 const DEBUG = process.env.DEBUG_TESTS === "1";
+function findEventLines(
+  logs: string[] | null | undefined,
+  contains: string
+): string[] {
+  if (!logs) return [];
+  return logs.filter((l) => l.includes(contains));
+}
 
 function toNum(v: any): number {
   if (v instanceof anchor.BN) return v.toNumber();
@@ -32,6 +40,19 @@ function toNum(v: any): number {
 function u64LE(n: anchor.BN): Buffer {
   return n.toArrayLike(Buffer, "le", 8);
 }
+function parseEvents(program: any, logs: string[]) {
+  const parser = new EventParser(program.programId, program.coder);
+  const events: any[] = [];
+
+  for (const evt of parser.parseLogs(logs)) {
+    events.push(evt);
+  }
+
+  return events;
+}
+
+
+
 async function expectFail(p: Promise<any>) {
   let failed = false;
   try {
@@ -734,7 +755,73 @@ it("Core21) splPay rejects memo > 64 bytes", async () => {
   }
   expect(threw).to.eq(true);
 });
+it("Core22) emits SplPayEvent (presence check)", async () => {
+  const { mint, treasuryAta } = await seedTreasury(1_000_000n);
 
+  // Recipient
+  const recipient = Keypair.generate();
+  const recipientAta = getAssociatedTokenAddressSync(
+    mint,
+    recipient.publicKey,
+    false,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  // Get payCount BEFORE the pay (receipt is seeded by this)
+  const treasuryAcc = await program.account.treasury.fetch(treasuryPda);
+  const payCountBefore = new anchor.BN(treasuryAcc.payCount);
+
+  const receiptPda = payReceiptPda(program.programId, treasuryPda, payCountBefore);
+
+  const payAmount = 1234;
+
+  // Execute pay (capture signature)
+  const txSig = await program.methods
+    .splPay(new anchor.BN(payAmount), null, null)
+    .accounts({
+      treasuryAuthority: protocolAuth.publicKey,
+      recipient: recipient.publicKey,
+      treasury: treasuryPda,
+      mint,
+      recipientAta,
+      treasuryAta: treasuryAta.address,
+      receipt: receiptPda,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    } as any)
+    .signers([protocolAuth])
+    .rpc();
+
+  await provider.connection.confirmTransaction(txSig, "confirmed");
+
+const tx = await provider.connection.getTransaction(txSig, {
+  commitment: "confirmed",
+  maxSupportedTransactionVersion: 0,
+} as any);
+
+if (!tx) throw new Error("Core22: getTransaction returned null (even after confirm)");
+
+
+  const logs = tx?.meta?.logMessages ?? [];
+
+const pid = program.programId.toBase58();
+const start = logs.findIndex((l) => l.includes(`Program ${pid} invoke`));
+const end = logs.findIndex((l, i) => i > start && l.includes(`Program ${pid} success`));
+
+if (start < 0 || end < 0) {
+  throw new Error("Core22: could not locate program invoke/success boundaries in logs");
+}
+
+const scoped = logs.slice(start, end + 1);
+const hasProgramData = scoped.some((l) => l.startsWith("Program data: "));
+
+expect(hasProgramData, "Expected Program data (event) to be emitted during splPay").to.eq(true);
+
+
+});
 
 });
 

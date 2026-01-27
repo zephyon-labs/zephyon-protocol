@@ -6,6 +6,8 @@ use anchor_spl::{
 
 use crate::errors::ErrorCode;
 use crate::state::{Receipt, ReceiptV2Ext, Treasury};
+use crate::events::SplPayEvent;
+
 const MEMO_MAX: usize = 64;
 
 #[derive(Accounts)]
@@ -128,8 +130,36 @@ pub fn handler(
     r.v2 = ReceiptV2Ext::spl_with_meta(ctx.accounts.mint.key(), reference, memo_slice);
 
 
-    // Increment pay_count after
-    ctx.accounts.treasury.pay_count = ctx.accounts.treasury.pay_count.saturating_add(1);
+   // Increment pay_count after
+ctx.accounts.treasury.pay_count = ctx.accounts.treasury.pay_count.saturating_add(1);
+
+// Emit event (after receipt/state succeeds)
+let clock = Clock::get()?;
+
+let (has_reference, reference_bytes) = match reference {
+    Some(r) => (true, r),
+    None => (false, [0u8; 32]),
+};
+
+let (has_memo, memo_len) = match memo.as_ref() {
+    Some(m) => (true, m.len() as u8),
+    None => (false, 0),
+};
+
+emit!(SplPayEvent {
+    pay_count: pay_count_before,
+    treasury: ctx.accounts.treasury.key(),
+    payer: ctx.accounts.treasury_authority.key(),
+    recipient: ctx.accounts.recipient.key(),
+    mint: ctx.accounts.mint.key(),
+    amount,
+    has_reference,
+    reference: reference_bytes,
+    has_memo,
+    memo_len,
+    unix_timestamp: clock.unix_timestamp,
+});
 
     Ok(())
 }
+

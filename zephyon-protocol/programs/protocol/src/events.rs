@@ -42,13 +42,31 @@ pub struct WithdrawEvent {
 
     pub slot: u64,
 }
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum PayDirection {
+    TreasuryToRecipient,
+    RecipientToTreasury,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum AssetKind {
+    SPL,
+}
+
 #[event]
 pub struct SplPayEvent {
     pub pay_count: u64,
 
     pub treasury: Pubkey,
-    pub payer: Pubkey,
+    pub treasury_authority: Pubkey,
     pub recipient: Pubkey,
+
+    pub receipt: Pubkey,
+
+    pub direction: PayDirection,
+    pub asset_kind: AssetKind,
+
 
     pub mint: Pubkey,
     pub amount: u64,
@@ -61,3 +79,4 @@ pub struct SplPayEvent {
 
     pub unix_timestamp: i64,
 }
+

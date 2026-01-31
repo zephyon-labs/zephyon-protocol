@@ -773,7 +773,6 @@ it("Core22) emits SplPayEvent (presence check)", async () => {
   const payCountBefore = new anchor.BN(treasuryAcc.payCount);
 
   const receiptPda = payReceiptPda(program.programId, treasuryPda, payCountBefore);
-
   const payAmount = 1234;
 
   // Execute pay (capture signature)
@@ -797,31 +796,40 @@ it("Core22) emits SplPayEvent (presence check)", async () => {
 
   await provider.connection.confirmTransaction(txSig, "confirmed");
 
-const tx = await provider.connection.getTransaction(txSig, {
-  commitment: "confirmed",
-  maxSupportedTransactionVersion: 0,
-} as any);
+  const tx = await provider.connection.getTransaction(txSig, {
+    commitment: "confirmed",
+    maxSupportedTransactionVersion: 0,
+  } as any);
 
-if (!tx) throw new Error("Core22: getTransaction returned null (even after confirm)");
+  if (!tx) throw new Error("Core22: getTransaction returned null (even after confirm)");
 
+  const logs = tx.meta?.logMessages ?? [];
 
-  const logs = tx?.meta?.logMessages ?? [];
+  // Canonical Anchor event parsing (handles CPI nesting + correct log shapes)
+  const parser = new anchor.EventParser(program.programId, program.coder);
 
-const pid = program.programId.toBase58();
-const start = logs.findIndex((l) => l.includes(`Program ${pid} invoke`));
-const end = logs.findIndex((l, i) => i > start && l.includes(`Program ${pid} success`));
+  const events: any[] = [];
+  for (const evt of parser.parseLogs(logs)) {
+    events.push(evt);
+  }
 
-if (start < 0 || end < 0) {
-  throw new Error("Core22: could not locate program invoke/success boundaries in logs");
-}
+  // Find SplPayEvent
+  const payEvt = events.find((e) => (e.name ?? "").toLowerCase() === "splpayevent");
 
-const scoped = logs.slice(start, end + 1);
-const hasProgramData = scoped.some((l) => l.startsWith("Program data: "));
+  if (!payEvt) {
+    const names = events.map((e) => e.name).filter(Boolean);
+    throw new Error(
+      `Core22/Core23B: SplPayEvent not found. Events seen: ${names.join(", ")}`
+    );
+  }
 
-expect(hasProgramData, "Expected Program data (event) to be emitted during splPay").to.eq(true);
+  const event: any = payEvt.data;
 
+  // Enum semantics (Core23B)
+  expect(event.direction).to.have.property("treasuryToRecipient");
+  expect(event.assetKind).to.have.property("spl");
 
+  // Deterministic linkage (recommended)
+  expect(event.receipt.toBase58()).to.eq(receiptPda.toBase58());
 });
-
 });
-

@@ -7,6 +7,8 @@ use anchor_spl::{
 use crate::errors::ErrorCode;
 use crate::state::{Receipt, ReceiptV2Ext, Treasury};
 use crate::events::SplPayEvent;
+use crate::events::{AssetKind, PayDirection};
+
 
 const MEMO_MAX: usize = 64;
 
@@ -148,17 +150,29 @@ let (has_memo, memo_len) = match memo.as_ref() {
 
 emit!(SplPayEvent {
     pay_count: pay_count_before,
+
     treasury: ctx.accounts.treasury.key(),
-    payer: ctx.accounts.treasury_authority.key(),
+    treasury_authority: ctx.accounts.treasury_authority.key(),
     recipient: ctx.accounts.recipient.key(),
+
+    receipt: ctx.accounts.receipt.key(),
+
+    direction: PayDirection::TreasuryToRecipient,
+    asset_kind: AssetKind::SPL,
+
+
     mint: ctx.accounts.mint.key(),
     amount,
+
     has_reference,
     reference: reference_bytes,
+
     has_memo,
     memo_len,
+
     unix_timestamp: clock.unix_timestamp,
 });
+
 
     Ok(())
 }

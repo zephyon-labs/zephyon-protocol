@@ -6,6 +6,9 @@ pub struct DepositEvent {
     pub mint: Pubkey,
     pub amount: u64,
     pub treasury: Pubkey,
+    pub direction: PayDirection,
+    pub asset_kind: AssetKind,
+
 
     // Optional “receipt” reference:
     // Pubkey::default() means “no receipt”
@@ -29,6 +32,9 @@ pub struct WithdrawEvent {
     pub mint: Pubkey,
     pub amount: u64,
     pub treasury: Pubkey,
+    pub direction: PayDirection,
+    pub asset_kind: AssetKind,
+
 
     // Pubkey::default() means “no receipt”
     pub receipt: Pubkey,
@@ -47,7 +53,12 @@ pub struct WithdrawEvent {
 pub enum PayDirection {
     TreasuryToRecipient,
     RecipientToTreasury,
+
+    // Core24 additions (APPEND ONLY — do not reorder)
+    UserToTreasury,
+    TreasuryToUser,
 }
+
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
 pub enum AssetKind {

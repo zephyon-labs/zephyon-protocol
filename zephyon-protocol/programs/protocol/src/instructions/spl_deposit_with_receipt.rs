@@ -5,9 +5,8 @@ use anchor_spl::{
 };
 
 use crate::errors::ErrorCode;
-use crate::events::DepositEvent;
 use crate::state::{Receipt, ReceiptV2Ext, Treasury};
-
+use crate::events::{DepositEvent, AssetKind, PayDirection};
 #[derive(Accounts)]
 #[instruction(amount: u64, nonce: u64)]
 pub struct SplDepositWithReceipt<'info> {
@@ -93,6 +92,9 @@ pub fn handler(ctx: Context<SplDepositWithReceipt>, amount: u64, nonce: u64) -> 
         mint: ctx.accounts.user_ata.mint,
         amount,
         treasury: ctx.accounts.treasury.key(),
+        direction: PayDirection::UserToTreasury,
+        asset_kind: AssetKind::SPL,
+
         receipt: ctx.accounts.receipt.key(),
         nonce_or_tx: nonce, // assuming your arg is named nonce
         xp_delta: 1,

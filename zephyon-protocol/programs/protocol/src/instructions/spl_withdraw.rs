@@ -5,8 +5,9 @@ use anchor_spl::{
 };
 
 use crate::errors::ErrorCode;
-use crate::events::WithdrawEvent;
 use crate::state::treasury::Treasury;
+use crate::events::{WithdrawEvent, AssetKind, PayDirection};
+
 
 #[derive(Accounts)]
 pub struct SplWithdraw<'info> {
@@ -95,6 +96,9 @@ pub fn handler(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
         mint: ctx.accounts.user_ata.mint, // again: depends on your naming
         amount,
         treasury: ctx.accounts.treasury.key(),
+        direction: PayDirection::UserToTreasury,
+        asset_kind: AssetKind::SPL,
+
         receipt: Pubkey::default(),
         nonce_or_tx: 0,
         xp_delta: 1,

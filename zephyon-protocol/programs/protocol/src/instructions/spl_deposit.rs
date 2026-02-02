@@ -7,16 +7,12 @@ use anchor_spl::{
     token::{self, Mint, Token, TokenAccount, Transfer},
 };
 
+use crate::events::{DepositEvent, AssetKind, PayDirection};
+
+
 use crate::state::treasury::Treasury;
 
-#[event]
-pub struct SplDepositEvent {
-    pub user: Pubkey,
-    pub mint: Pubkey,
-    pub amount: u64,
-    pub treasury: Pubkey,
-    pub treasury_ata: Pubkey,
-}
+
 
 #[derive(Accounts)]
 pub struct SplDeposit<'info> {
@@ -85,13 +81,22 @@ pub fn handler(ctx: Context<SplDeposit>, amount: u64) -> Result<()> {
     token::transfer(cpi_ctx, amount)?;
 
     // Recommend: keep ONE canonical event (SplDepositEvent) until receipts/XP/risk are real.
-    emit!(SplDepositEvent {
+    let slot = Clock::get()?.slot;
+
+    emit!(DepositEvent {
         user: ctx.accounts.user.key(),
         mint: ctx.accounts.mint.key(),
         amount,
         treasury: ctx.accounts.treasury.key(),
-        treasury_ata: ctx.accounts.treasury_ata.key(),
+        direction: PayDirection::UserToTreasury,
+        asset_kind: AssetKind::SPL,
+        receipt: Pubkey::default(),
+        nonce_or_tx: 0,
+        xp_delta: 1,
+        risk_flags: 0,
+        slot,
     });
+
 
     Ok(())
 }

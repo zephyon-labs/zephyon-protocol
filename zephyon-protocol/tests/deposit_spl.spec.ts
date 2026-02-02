@@ -1,8 +1,13 @@
 import * as anchor from "@coral-xyz/anchor";
 import { deriveTreasuryPda, loadProtocolAuthority, airdrop } from "./_helpers";
+import { Program } from "@coral-xyz/anchor";
+import { Protocol } from "../target/types/protocol";
+
 
 import { PublicKey, SystemProgram, Keypair } from "@solana/web3.js";
 import BN from "bn.js";
+import { expect } from "chai";
+
 
 import {
   createMint,
@@ -13,13 +18,20 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
+function toNum(v: any): number {
+  if (v instanceof anchor.BN) return v.toNumber();
+  if (v?.toNumber) return v.toNumber();
+  return Number(v);
+}
+
 
 describe("protocol - spl deposit", () => {
   const provider = anchor.AnchorProvider.env();
-  anchor.setProvider(provider);
+anchor.setProvider(provider);
 
-  // Workspace program bound to current provider (we will re-grab after provider swaps)
-  const program = anchor.workspace.Protocol as any;
+const program = anchor.workspace.Protocol as Program<Protocol>;
+const payer = (provider.wallet as any).payer as anchor.web3.Keypair;
+
 
   async function accountExists(
     conn: anchor.web3.Connection,
@@ -209,7 +221,7 @@ describe("protocol - spl deposit", () => {
           authority: provider.wallet.publicKey,
           treasury: treasuryPda,
           systemProgram: SystemProgram.programId,
-        })
+        }as any)
         .rpc();
       console.log("Treasury initialized:", treasuryPda.toBase58());
     } catch {
@@ -284,7 +296,7 @@ describe("protocol - spl deposit", () => {
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      }as any)
       .signers([user])
       .rpc();
 
@@ -312,6 +324,147 @@ describe("protocol - spl deposit", () => {
       throw new Error("Treasury balance did not increase by depositAmount");
     }
   });
+ it("Core27) emits DepositEvent semantics for splDeposit (direction + assetKind)", async () => {
+  // --- Treasury PDA
+  const [treasuryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("treasury")],
+    program.programId
+  );
+
+  // --- Ensure treasury initialized with protocol authority (not wallet payer)
+  const protocolAuth = loadProtocolAuthority();
+  await airdrop(provider, protocolAuth.publicKey, 2);
+
+  try {
+    await program.methods
+      .initializeTreasury()
+      .accounts({
+        authority: protocolAuth.publicKey,
+        treasury: treasuryPda,
+        systemProgram: SystemProgram.programId,
+      } as any)
+      .signers([protocolAuth])
+      .rpc();
+  } catch {
+    // already exists
+  }
+
+  // --- Create a fresh user (clean + deterministic)
+  const user = Keypair.generate();
+  const sig = await provider.connection.requestAirdrop(
+    user.publicKey,
+    2 * anchor.web3.LAMPORTS_PER_SOL
+  );
+  await provider.connection.confirmTransaction(sig, "confirmed");
+
+  // --- Mint + ATAs
+  const mint = await createMint(
+    provider.connection,
+    user,
+    user.publicKey,
+    null,
+    6
+  );
+
+  const userAta = await getOrCreateAssociatedTokenAccount(
+    provider.connection,
+    user,
+    mint,
+    user.publicKey
+  );
+
+  const treasuryAtaAddr = await getAssociatedTokenAddress(mint, treasuryPda, true);
+
+  // Ensure treasury ATA exists (keeps test deterministic)
+  await getOrCreateAssociatedTokenAccount(
+    provider.connection,
+    user,
+    mint,
+    treasuryPda,
+    true
+  );
+
+  // --- Seed user funds
+  const amount = 1_000_000;
+  await mintTo(
+    provider.connection,
+    user,
+    mint,
+    userAta.address,
+    user.publicKey,
+    amount
+  );
+
+  // --- Execute splDeposit and CAPTURE signature
+  const txSig = await program.methods
+    .splDeposit(new BN(amount))
+    .accounts({
+      user: user.publicKey,
+      treasury: treasuryPda,
+      mint,
+      userAta: userAta.address,
+      treasuryAta: treasuryAtaAddr,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    } as any)
+    .signers([user])
+    .rpc();
+
+  await provider.connection.confirmTransaction(txSig, "confirmed");
+
+  // --- Pull transaction logs
+  const tx = await provider.connection.getTransaction(txSig, {
+    commitment: "confirmed",
+    maxSupportedTransactionVersion: 0,
+  } as any);
+
+  if (!tx) throw new Error("Core27: getTransaction returned null (even after confirm)");
+
+  const logs = tx.meta?.logMessages ?? [];
+
+  // --- Canonical Anchor event parsing
+  const parser = new anchor.EventParser(program.programId, program.coder);
+  const events: any[] = [];
+  for (const evt of parser.parseLogs(logs)) events.push(evt);
+
+ const depEvt = events.find((e) => {
+  const name = String(e?.name ?? "").toLowerCase();
+  return name === "spldepositevent" || name === "depositevent";
 });
+
+if (!depEvt) {
+  const names = events.map((e) => e?.name).filter(Boolean);
+  throw new Error(`Core27: deposit event not found. Events seen: ${names.join(", ")}`);
+}
+
+const event: any = depEvt.data;
+console.log("Core27 event keys:", Object.keys(event));
+console.log("Core27 raw event:", event);
+
+
+// tolerate snake_case vs camelCase vs alt field names
+const assetKind = event.assetKind ?? event.asset_kind;
+const direction = event.direction ?? event.payDirection ?? event.pay_direction;
+
+expect(assetKind, "assetKind missing").to.exist;
+expect(direction, "direction missing").to.exist;
+
+// semantics
+expect(assetKind).to.have.property("spl");
+expect(direction).to.have.property("userToTreasury");
+
+
+// sanity fields (these should exist)
+expect(event.user.toBase58()).to.eq(user.publicKey.toBase58());      // use your local user, not payer
+expect(event.treasury.toBase58()).to.eq(treasuryPda.toBase58());
+expect(event.mint.toBase58()).to.eq(mint.toBase58());
+expect(toNum(event.amount)).to.eq(amount);
+});
+  
+});
+
+
 
 

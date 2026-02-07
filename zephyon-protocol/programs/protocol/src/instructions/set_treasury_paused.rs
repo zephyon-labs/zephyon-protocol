@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::ErrorCode;
+use crate::events::TreasuryPausedSetEvent;
 use crate::state::treasury::Treasury;
 
 #[derive(Accounts)]
@@ -30,6 +31,16 @@ pub fn handler(ctx: Context<SetTreasuryPaused>, paused: bool) -> Result<()> {
     );
 
     ctx.accounts.treasury.paused = paused;
+
+    // Core28: governance observability (non-behavioral)
+    let clock = Clock::get()?;
+    emit!(TreasuryPausedSetEvent {
+        treasury: ctx.accounts.treasury.key(),
+        authority: ctx.accounts.treasury_authority.key(),
+        paused: ctx.accounts.treasury.paused,
+        slot: clock.slot,
+        unix_timestamp: clock.unix_timestamp,
+    });
 
     msg!("Treasury paused is now: {}", ctx.accounts.treasury.paused);
     Ok(())

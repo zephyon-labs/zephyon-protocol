@@ -2,7 +2,6 @@ import * as anchor from "@coral-xyz/anchor";
 import { expect } from "chai";
 import { SystemProgram } from "@solana/web3.js";
 import { Protocol } from "../target/types/protocol";
-import crypto from "crypto";
 
 import {
   deriveTreasuryPda,
@@ -10,60 +9,15 @@ import {
   loadProtocolAuthority,
 } from "./_helpers";
 
-/**
- * Robust event finder:
- * - Anchor events appear in logs as: "Program data: <base64>"
- * - Sometimes that base64 includes an extra 8-byte prefix (depending on how it was emitted/logged).
- * We try both: raw and raw[8..].
- */
-function eventDiscriminator(name: string): Buffer {
-  return crypto.createHash("sha256").update(`event:${name}`).digest().subarray(0, 8);
-}
+import { getTxWithRetry } from "./helpers/tx";
+import { findEvent } from "./helpers/events";
 
-function findEventWithParser(
-  program: anchor.Program<any>,
-  logs: string[],
-  eventName: string
-) {
-  const parser = new anchor.EventParser(program.programId, program.coder);
-
-  const decodedNames: string[] = [];
-  let hit: any = null;
-
-  // parseLogs returns events (iterable/array) in your Anchor version
-  const events: any = parser.parseLogs(logs);
-
-  for (const evt of events) {
-    decodedNames.push(evt.name);
-    if (evt.name === eventName) hit = evt.data;
-  }
-
-  return { hit, decodedNames };
-}
-
-
-
-async function getTxWithRetry(
-  conn: anchor.web3.Connection,
-  sig: string,
-  tries = 12,
-  delayMs = 150
-) {
-  const commitment: anchor.web3.Finality = "confirmed";
-
-  for (let i = 0; i < tries; i++) {
-    const tx = await conn.getTransaction(sig, {
-      commitment,
-      maxSupportedTransactionVersion: 0,
-    });
-    if (tx?.meta?.logMessages?.length) return tx;
-    await new Promise((r) => setTimeout(r, delayMs));
-  }
-
-  return await conn.getTransaction(sig, {
-    commitment,
-    maxSupportedTransactionVersion: 0,
-  });
+function bnToNum(x: any): number {
+  if (x === null || x === undefined) return NaN;
+  if (typeof x === "number") return x;
+  if (typeof x === "bigint") return Number(x);
+  if (typeof x?.toNumber === "function") return x.toNumber();
+  return Number(x);
 }
 
 describe("protocol - governance events (Core28)", () => {
@@ -91,12 +45,9 @@ describe("protocol - governance events (Core28)", () => {
     }
   });
 
-  it("emits TreasuryInitializedEvent (presence check)", async () => {
-    // Ensure treasury exists (idempotent)
+  it("emits TreasuryInitializedEvent (semantics)", async () => {
     await initFoundationOnce(provider, program as any);
 
-    // Only assert the init EVENT if *this test* actually performed the init tx.
-    // If another test already initialized, there is no init tx to observe.
     let sig: string | null = null;
 
     try {
@@ -110,7 +61,7 @@ describe("protocol - governance events (Core28)", () => {
         .signers([protocolAuth])
         .rpc();
     } catch {
-      // Already initialized -> pass by confirming it exists
+      // Already initialized — cannot observe init event here; assert existence only
       const acc = await (program.account as any).treasury.fetch(treasuryPda);
       expect(acc).to.not.eq(null);
       return;
@@ -120,52 +71,121 @@ describe("protocol - governance events (Core28)", () => {
     expect(tx, "init tx not found").to.not.eq(null);
 
     const logs = tx?.meta?.logMessages ?? [];
-    const { hit, decodedNames } = findEventWithParser(program as any, logs, "TreasuryInitializedEvent");
+
+    const { hit, matchedName, decodedNames } = findEvent(program as any, logs, [
+      "TreasuryInitializedEvent",
+      "treasuryInitializedEvent",
+    ]);
+
     console.log("EventParser decoded names (init):", decodedNames);
+    console.log("Matched init event:", matchedName);
+    console.log("Init event payload:", hit);
+
     expect(hit, "TreasuryInitializedEvent not found in logs").to.not.eq(null);
 
+    // --- semantic asserts (reviewer-grade) ---
+    expect(hit.treasury.toString()).to.eq(treasuryPda.toString());
+    expect(hit.authority.toString()).to.eq(protocolAuth.publicKey.toString());
+
+    // init-specific fields
+    expect(hit.paused).to.eq(false);
+    expect(bnToNum(hit.payCount)).to.be.greaterThanOrEqual(0);
+
+    // bump is u8
+    expect(bnToNum(hit.bump)).to.be.within(0, 255);
+
+    // telemetry
+    expect(bnToNum(hit.slot)).to.be.greaterThan(0);
+    expect(bnToNum(hit.unixTimestamp)).to.be.greaterThan(0);
   });
 
-  it("emits TreasuryPausedSetEvent (presence check)", async () => {
-  await initFoundationOnce(provider, program as any);
+  it("emits TreasuryPausedSetEvent (semantics: pause)", async () => {
+    await initFoundationOnce(provider, program as any);
 
-  const sig = await program.methods
-    .setTreasuryPaused(true)
-    .accountsStrict({
-      treasury: treasuryPda,
-      treasuryAuthority: protocolAuth.publicKey,
-    })
-    .signers([protocolAuth])
-    .rpc();
+    const sig = await program.methods
+      .setTreasuryPaused(true)
+      .accountsStrict({
+        treasury: treasuryPda,
+        treasuryAuthority: protocolAuth.publicKey,
+      })
+      .signers([protocolAuth])
+      .rpc();
 
-  await provider.connection.confirmTransaction(sig, "finalized");
+    await provider.connection.confirmTransaction(sig, "finalized");
 
-  const tx = await getTxWithRetry(provider.connection, sig);
-  expect(tx, "pause tx not found").to.not.eq(null);
+    const tx = await getTxWithRetry(provider.connection, sig);
+    expect(tx, "pause tx not found").to.not.eq(null);
 
-  const logs = tx!.meta?.logMessages ?? [];
-  const { hit, decodedNames } = findEventWithParser(program as any, logs, "treasuryPausedSetEvent");
+    const logs = tx!.meta?.logMessages ?? [];
 
+    const { hit, matchedName, decodedNames } = findEvent(program as any, logs, [
+      "TreasuryPausedSetEvent",
+      "treasuryPausedSetEvent",
+    ]);
 
-  console.log("EventParser decoded names:", decodedNames);
-  console.log("Pause event hit:", hit);
+    console.log("EventParser decoded names (pause):", decodedNames);
+    console.log("Matched pause event:", matchedName);
+    console.log("Pause event payload:", hit);
 
-  expect(hit, "treasuryPausedSetEvent not found in logs").to.not.eq(null);
+    expect(hit, "TreasuryPausedSetEvent not found in logs (pause)").to.not.eq(null);
 
+    expect(hit.paused).to.eq(true);
+    expect(hit.treasury.toString()).to.eq(treasuryPda.toString());
+    expect(hit.authority.toString()).to.eq(protocolAuth.publicKey.toString());
 
-  // Restore immediately
-  await program.methods
-    .setTreasuryPaused(false)
-    .accountsStrict({
-      treasury: treasuryPda,
-      treasuryAuthority: protocolAuth.publicKey,
-    })
-    .signers([protocolAuth])
-    .rpc();
+    expect(bnToNum(hit.slot)).to.be.greaterThan(0);
+    expect(bnToNum(hit.unixTimestamp)).to.be.greaterThan(0);
+
+    // Restore immediately
+    await program.methods
+      .setTreasuryPaused(false)
+      .accountsStrict({
+        treasury: treasuryPda,
+        treasuryAuthority: protocolAuth.publicKey,
+      })
+      .signers([protocolAuth])
+      .rpc();
   });
 
+  it("emits TreasuryPausedSetEvent (semantics: unpause)", async () => {
+    await initFoundationOnce(provider, program as any);
 
+    const sig = await program.methods
+      .setTreasuryPaused(false)
+      .accountsStrict({
+        treasury: treasuryPda,
+        treasuryAuthority: protocolAuth.publicKey,
+      })
+      .signers([protocolAuth])
+      .rpc();
 
+    await provider.connection.confirmTransaction(sig, "finalized");
+
+    const tx = await getTxWithRetry(provider.connection, sig);
+    expect(tx, "unpause tx not found").to.not.eq(null);
+
+    const logs = tx!.meta?.logMessages ?? [];
+
+    const { hit, matchedName, decodedNames } = findEvent(program as any, logs, [
+      "TreasuryPausedSetEvent",
+      "treasuryPausedSetEvent",
+    ]);
+
+    console.log("EventParser decoded names (unpause):", decodedNames);
+    console.log("Matched unpause event:", matchedName);
+    console.log("Unpause event payload:", hit);
+
+    expect(hit, "TreasuryPausedSetEvent not found in logs (unpause)").to.not.eq(null);
+
+    expect(hit.paused).to.eq(false);
+    expect(hit.treasury.toString()).to.eq(treasuryPda.toString());
+    expect(hit.authority.toString()).to.eq(protocolAuth.publicKey.toString());
+
+    expect(bnToNum(hit.slot)).to.be.greaterThan(0);
+    expect(bnToNum(hit.unixTimestamp)).to.be.greaterThan(0);
+  });
 });
+
+
 
 

@@ -48,6 +48,29 @@ pub struct WithdrawEvent {
 
     pub slot: u64,
 }
+#[event]
+pub struct TreasuryInitializedEvent {
+    pub treasury: Pubkey,
+    pub authority: Pubkey,
+
+    pub paused: bool,
+    pub bump: u8,
+    pub pay_count: u64,
+
+    pub slot: u64,
+    pub unix_timestamp: i64,
+}
+
+#[event]
+pub struct TreasuryPausedSetEvent {
+    pub treasury: Pubkey,
+    pub authority: Pubkey,
+
+    pub paused: bool,
+
+    pub slot: u64,
+    pub unix_timestamp: i64,
+}
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
 pub enum PayDirection {
@@ -87,6 +110,7 @@ pub struct SplPayEvent {
 
     pub has_memo: bool,
     pub memo_len: u8,
+    pub slot: u64,
 
     pub unix_timestamp: i64,
 }

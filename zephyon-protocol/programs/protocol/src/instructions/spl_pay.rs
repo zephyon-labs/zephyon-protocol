@@ -169,6 +169,7 @@ emit!(SplPayEvent {
 
     has_memo,
     memo_len,
+    slot: clock.slot,
 
     unix_timestamp: clock.unix_timestamp,
 });

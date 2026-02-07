@@ -1,3 +1,4 @@
+use crate::events::TreasuryInitializedEvent;
 use crate::state::treasury::Treasury;
 use anchor_lang::prelude::*;
 
@@ -11,8 +12,6 @@ pub struct InitializeTreasury<'info> {
         payer = authority,
         seeds = [b"treasury"],
         bump,
-        
-
         space = Treasury::INIT_SPACE
     )]
     pub treasury: Account<'info, Treasury>,
@@ -28,6 +27,18 @@ pub fn handler(ctx: Context<InitializeTreasury>) -> Result<()> {
     treasury.bump = ctx.bumps.treasury;
     treasury.pay_count = 0;
 
+    // Core28: governance observability (non-behavioral)
+    let clock = Clock::get()?;
+    emit!(TreasuryInitializedEvent {
+        treasury: treasury.key(),
+        authority: ctx.accounts.authority.key(),
+        paused: treasury.paused,
+        bump: treasury.bump,
+        pay_count: treasury.pay_count,
+        slot: clock.slot,
+        unix_timestamp: clock.unix_timestamp,
+    });
 
     Ok(())
 }
+

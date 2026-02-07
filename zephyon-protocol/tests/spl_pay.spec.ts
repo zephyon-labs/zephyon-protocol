@@ -831,9 +831,14 @@ it("Core22) emits SplPayEvent (presence check)", async () => {
 
   // Deterministic linkage (recommended)
   expect(event.receipt.toBase58()).to.eq(receiptPda.toBase58());
+
   // Hardening invariants (Core23A)
   expect(event.amount.toNumber()).to.eq(payAmount);
   expect(event.mint.toBase58()).to.eq(mint.toBase58());
 
-});
+  // Telemetry (Build29 polish)
+  expect(event.slot).to.not.eq(undefined);
+  expect(event.slot.toNumber()).to.be.greaterThan(0);
+
+  });
 });

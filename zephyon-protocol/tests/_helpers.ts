@@ -29,6 +29,16 @@ export const ASSET_SOL = 1;
 export const ASSET_SPL = 2;
 // Optional type import if you generated types
 // import type { Protocol } from "../target/types/protocol";
+// -----------------------------------------------------------------------------
+// Nonce namespaces (TEST-ONLY)
+// These prevent PDA collisions across different instruction families.
+// Keep these disjoint forever.
+// -----------------------------------------------------------------------------
+
+export const NONCE_DEPOSIT_BASE = 100_000;
+export const NONCE_PAY_BASE = 1_000_000;
+export const NONCE_WITHDRAW_BASE = 10_000_000;
+
 
 /* ─────────────────────────────────────────────────────────
  * Authority constant — must match tests/keys/protocol-authority.json

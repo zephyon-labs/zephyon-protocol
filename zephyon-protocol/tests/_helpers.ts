@@ -110,6 +110,20 @@ export function deriveWithdrawReceiptPda(
     programId
   );
 }
+/** ✅ Canonical receipt PDA — SPL pay with receipt
+ * seeds = ["receipt", treasury, nonce_le_u64]
+ */
+export function derivePayReceiptPda(
+  programId: PublicKey,
+  treasury: PublicKey,
+  nonce: BN | bigint | number
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("receipt"), treasury.toBuffer(), toLeU64(nonce)],
+    programId
+  );
+}
+
 
 export function deriveReceiptPdaV2(args: {
   program: anchor.Program;

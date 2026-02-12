@@ -369,7 +369,90 @@ export async function setupMintAndAtas(
 
   return { mint, userAta, treasuryAta, tokenProgram: TOKEN_PROGRAM_ID };
 }
+/* ─────────────────────────────────────────────────────────
+ * Tier2 infra: bounded concurrency + retry
+ * ───────────────────────────────────────────────────────── */
 
+export async function runBounded<T>(
+  concurrency: number,
+  items: T[],
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  const queue = items.map((item, index) => ({ item, index }));
+  const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
+    while (queue.length) {
+      const next = queue.shift();
+      if (!next) return;
+      await worker(next.item, next.index);
+    }
+  });
+  await Promise.all(workers);
+}
+
+type RetryOpts = {
+  retries?: number;
+  baseDelayMs?: number;
+  label?: string;
+  shouldRetry?: (e: any) => boolean;
+};
+
+function sleep(ms: number) {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  opts: RetryOpts = {}
+): Promise<T> {
+  const retries = opts.retries ?? 3;
+  const baseDelayMs = opts.baseDelayMs ?? 200;
+
+  const defaultShouldRetry = (e: any) => {
+    const msg = String(e?.message ?? e);
+
+    const logicalFailures = [
+      "ProtocolPaused",
+      "Unauthorized",
+      "UnauthorizedWithdraw",
+      "Constraint",
+      "has_one",
+      "seeds constraint",
+    ];
+
+    if (logicalFailures.some((s) => msg.includes(s))) return false;
+
+    return (
+      msg.includes("Blockhash not found") ||
+      msg.includes("Transaction was not confirmed") ||
+      msg.includes("Node is behind") ||
+      msg.includes("429") ||
+      msg.includes("Too many requests") ||
+      msg.includes("AccountInUse") ||
+      msg.includes("already in use") ||
+      msg.includes("Timed out") ||
+      msg.includes("timeout")
+    );
+  };
+
+  const shouldRetry = opts.shouldRetry ?? defaultShouldRetry;
+
+  let lastErr: any;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+
+      if (attempt === retries || !shouldRetry(e)) throw e;
+
+      const delay = baseDelayMs * (attempt + 1);
+      await sleep(delay);
+    }
+  }
+
+  throw lastErr;
+}
 /* ─────────────────────────────────────────────────────────
  * Convenient re-exports
  * ───────────────────────────────────────────────────────── */

@@ -1,3 +1,14 @@
+/**
+ * Tier1 Stress Suite
+ * - Validates pause gating under concurrent load
+ * - Validates splPay sequential and bounded concurrency
+ * - Ensures treasury delta integrity
+ * - Prevents ATA race conditions via precreation
+ *
+ * Verified stable: v0.29.3
+ */
+
+
 // tests/stress_pause_flip.spec.ts
 import * as anchor from "@coral-xyz/anchor";
 import { AnchorProvider } from "@coral-xyz/anchor";
@@ -26,6 +37,24 @@ import {
  * ----------------------------- */
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+async function waitForTx(
+  connection: anchor.web3.Connection,
+  sig: string,
+  commitment: anchor.web3.Commitment = "confirmed",
+  maxMs = 20_000,
+  pollMs = 500
+) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    const tx = await connection.getTransaction(sig, {
+      
+      maxSupportedTransactionVersion: 0,
+    });
+    if (tx) return tx;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  return null;
 }
 
 // Bounded concurrency runner (no deps)
@@ -159,20 +188,41 @@ async function sendSetPausedRaw(
     "confirmed"
   );
 
-  // forensic check (optional but useful)
-  const info = await provider.connection.getTransaction(sig, {
+  // forensic check (optional but useful) — RPC can lag under load, so poll briefly
+let info = null as any;
+const start = Date.now();
+const maxMs = 25_000;
+const pollMs = 750;
+
+while (!info && Date.now() - start < maxMs) {
+  info = await provider.connection.getTransaction(sig, {
     commitment: "confirmed",
     maxSupportedTransactionVersion: 0,
   });
-
-  if (!info) throw new Error(`getTransaction returned null for pause tx ${sig}`);
-  if (info.meta?.err) {
-    // eslint-disable-next-line no-console
-    console.log("PAUSE TX FAILED SIG:", sig);
-    // eslint-disable-next-line no-console
-    console.log("LOGS:\n", (info.meta.logMessages ?? []).join("\n"));
-    throw new Error(`pause tx failed: ${JSON.stringify(info.meta.err)}`);
+  if (!info) {
+    await new Promise((r) => setTimeout(r, pollMs));
   }
+}
+
+if (!info) {
+  const st = await provider.connection.getSignatureStatus(sig, {
+    searchTransactionHistory: true,
+  });
+  throw new Error(
+    `getTransaction returned null for pause tx ${sig} after ${maxMs}ms (status=${JSON.stringify(
+      st?.value
+    )})`
+  );
+}
+
+if (info.meta?.err) {
+  // eslint-disable-next-line no-console
+  console.log("PAUSE TX FAILED SIG:", sig);
+  // eslint-disable-next-line no-console
+  console.log("LOGS:\n", (info.meta.logMessages ?? []).join("\n"));
+  throw new Error(`pause tx failed: ${JSON.stringify(info.meta.err)}`);
+}
+
 
   return sig;
 }

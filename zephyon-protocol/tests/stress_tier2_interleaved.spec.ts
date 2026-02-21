@@ -195,6 +195,10 @@ const programId = new PublicKey(idl.address); // keep if you need it elsewhere
   });
 
   it("Layer2A: interleaves PAY + PAUSE without invariant drift", async () => {
+    const pauseFn = pickPauseMethod(programAny);
+await pauseFn(false);
+
+
     const treasuryBefore = await getAccount(authorityProvider.connection, treasuryAta);
     const recipientBefore = await getAccount(authorityProvider.connection, recipientAta);
 
@@ -214,7 +218,7 @@ const programId = new PublicKey(idl.address); // keep if you need it elsewhere
       }
     }
 
-    const pauseFn = pickPauseMethod(programAny);
+    
 
     const CONCURRENCY = 6;
 

@@ -16,6 +16,8 @@ import {
   createAssociatedTokenAccountInstruction,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  createMint,
+  mintTo,
 } from "@solana/spl-token";
 import { expect } from "chai";
 
@@ -315,17 +317,41 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
     // Derive treasury PDA
     [treasuryPda] = PublicKey.findProgramAddressSync([Buffer.from("treasury")], program.programId);
 
-    // Discover treasury token account + mint
-    const tokenAccounts = await provider.connection.getTokenAccountsByOwner(treasuryPda, {
-      programId: TOKEN_PROGRAM_ID,
-    });
-    if (!tokenAccounts.value.length) {
-      throw new Error("Treasury PDA has no SPL token accounts (expected funded treasury).");
-    }
+    // Create a fresh mint for Tier3B (self-contained, no suite coupling)
+mint = await createMint(
+  provider.connection,
+  protocolAuth,              // payer
+  protocolAuth.publicKey,    // mint authority
+  null,
+  6
+);
 
-    treasuryAtaPk = tokenAccounts.value[0].pubkey;
-    const treasuryTokenAcc = await getAccount(provider.connection, treasuryAtaPk);
-    mint = treasuryTokenAcc.mint;
+// Create treasury ATA for this mint
+treasuryAtaPk = getAssociatedTokenAddressSync(mint, treasuryPda, true);
+const treasuryAtaInfo = await provider.connection.getAccountInfo(treasuryAtaPk);
+if (!treasuryAtaInfo) {
+  const ix = createAssociatedTokenAccountInstruction(
+    protocolAuth.publicKey, // payer
+    treasuryAtaPk,
+    treasuryPda,            // owner (PDA)
+    mint,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix), [protocolAuth], {
+    commitment: "confirmed",
+  });
+}
+
+// Fund treasury ATA so splPay can never run dry
+await mintTo(
+  provider.connection,
+  protocolAuth,
+  mint,
+  treasuryAtaPk,
+  protocolAuth.publicKey,
+  5_000_000 // plenty for stress
+);
 
     console.log("Tier3B resolved mint:", mint.toBase58());
     console.log("Tier3B resolved treasuryAta:", treasuryAtaPk.toBase58());

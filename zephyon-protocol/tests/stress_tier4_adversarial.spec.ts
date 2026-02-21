@@ -24,6 +24,8 @@ import {
   createAssociatedTokenAccountInstruction,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  createMint,
+  mintTo,
 } from "@solana/spl-token";
 import { expect } from "chai";
 
@@ -314,16 +316,51 @@ describe("stress - Tier4 adversarial scheduler (SEEDed, STRICT)", () => {
     [treasuryPda] = PublicKey.findProgramAddressSync([Buffer.from("treasury")], program.programId);
 
     // Discover treasury token account + mint (must already be funded)
-    const tokenAccounts = await provider.connection.getTokenAccountsByOwner(treasuryPda, {
-      programId: TOKEN_PROGRAM_ID,
-    });
-    if (!tokenAccounts.value.length) {
-      throw new Error("Treasury PDA has no SPL token accounts (expected funded treasury).");
-    }
+    // Create a fresh mint for Tier3B (self-contained, no suite coupling)
+mint = await createMint(
+  provider.connection,
+  protocolAuth,              // payer
+  protocolAuth.publicKey,    // mint authority
+  null,
+  6
+);
 
-    treasuryAtaPk = tokenAccounts.value[0].pubkey;
-    const treasuryTokenAcc = await getAccount(provider.connection, treasuryAtaPk);
-    mint = treasuryTokenAcc.mint;
+// Create treasury ATA for this mint
+treasuryAtaPk = getAssociatedTokenAddressSync(mint, treasuryPda, true);
+const treasuryAtaInfo = await provider.connection.getAccountInfo(treasuryAtaPk);
+if (!treasuryAtaInfo) {
+  const ix = createAssociatedTokenAccountInstruction(
+    protocolAuth.publicKey, // payer
+    treasuryAtaPk,
+    treasuryPda,            // owner (PDA)
+    mint,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  await withRetry(
+  async () => {
+    const tx = new anchor.web3.Transaction().add(ix);
+    return provider.sendAndConfirm(tx, [protocolAuth], {
+      commitment: "confirmed",
+    });
+  },
+  { retries: 6, baseDelayMs: 250, label: "tier4-create-treasury-ata" }
+);
+}
+
+// Fund treasury ATA so splPay can never run dry
+await withRetry(
+  () =>
+    mintTo(
+      provider.connection,
+      protocolAuth,
+      mint,
+      treasuryAtaPk,
+      protocolAuth.publicKey,
+      5_000_000
+    ),
+  { retries: 6, baseDelayMs: 250, label: "tier4-mintTo" }
+);
 
     // Build recipients + fund ATA rent
     recipients.length = 0;

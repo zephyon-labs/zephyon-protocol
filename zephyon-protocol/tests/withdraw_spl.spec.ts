@@ -1,165 +1,272 @@
+// tests/spl_withdraw.spec.ts
 import * as anchor from "@coral-xyz/anchor";
-
-import { PublicKey, SystemProgram, Keypair } from "@solana/web3.js";
-import BN from "bn.js";
-import { loadProtocolAuthority, airdrop } from "./_helpers";
-
+import { AnchorProvider } from "@coral-xyz/anchor";
+import { Keypair, SystemProgram, PublicKey } from "@solana/web3.js";
+import { expect } from "chai";
+import { Protocol } from "../target/types/protocol";
 
 import {
-  createMint,
-  getOrCreateAssociatedTokenAccount,
-  mintTo,
-  getAccount,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+  getAccount,
 } from "@solana/spl-token";
+
+import {
+  getProgram,
+  initFoundationOnce,
+  setupMintAndAtas,
+  loadProtocolAuthority,
+  airdrop,
+  BN,
+} from "./_helpers";
+
+async function expectFail(p: Promise<any>) {
+  let failed = false;
+  try {
+    await p;
+  } catch {
+    failed = true;
+  }
+  expect(failed).to.eq(true);
+}
 
 describe("protocol - spl withdraw", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = anchor.workspace.Protocol as any;
+  let program: anchor.Program<Protocol>;
+  let programAny: any;
 
-  it("withdraws SPL from treasury ATA to user ATA", async () => {
-    const protocolAuth = loadProtocolAuthority();
+  let treasuryPda: PublicKey;
+  let protocolAuth: Keypair;
+
+  before(async () => {
+    program = getProgram() as anchor.Program<Protocol>;
+    programAny = program as any;
+
+    const foundation = await initFoundationOnce(
+      provider as AnchorProvider,
+      program as any
+    );
+    treasuryPda = foundation.treasuryPda;
+
+    protocolAuth = loadProtocolAuthority();
     await airdrop(provider, protocolAuth.publicKey, 2);
 
-    console.log("PROGRAM ID:", program.programId.toBase58());
-    console.log(
-      "IDL instruction names:",
-      program.idl.instructions.map((i) => i.name)
-    );
+    // sanity: treasury authority on-chain must match signer
+    const t: any = await program.account.treasury.fetch(treasuryPda);
+    expect(t.authority.toBase58()).to.eq(protocolAuth.publicKey.toBase58());
 
-    // Anchor IDL camelCases instruction names
-    const ix = program.idl.instructions.find((i) => i.name === "splWithdraw");
-    if (!ix) throw new Error("IDL missing instruction: splWithdraw");
-
-    console.log("splWithdraw required accounts:");
-    console.log(ix.accounts.map((a) => a.name));
-
-    // ─────────────────────────────────────────────
-    // 1) Treasury PDA (init once, idempotent)
-    // ─────────────────────────────────────────────
-    const [treasuryPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("treasury")],
-      program.programId
-    );
-
+    // hard unpause to avoid cross-test poisoning
     try {
-      await program.methods
-        .initializeTreasury()
-        .accounts({
-          authority: provider.wallet.publicKey,
-          treasury: treasuryPda,
-          systemProgram: SystemProgram.programId,
-        })
+      await programAny.methods
+        .setTreasuryPaused(false)
+        .accounts({ treasury: treasuryPda, treasuryAuthority: protocolAuth.publicKey } as any)
+        .signers([protocolAuth])
         .rpc();
-      console.log("Treasury initialized:", treasuryPda.toBase58());
-    } catch (e: any) {
-      console.log("Treasury init skipped (likely already exists).");
-    }
+    } catch (_) {}
+  });
 
-    // ─────────────────────────────────────────────
-    // 2) Setup: user + mint + ATAs
-    // ─────────────────────────────────────────────
-    const user = Keypair.generate();
+  it("A) withdraws SPL from treasury ATA to user ATA (authority gated, ATA auto-create)", async () => {
+    // create mint + treasury/user ATAs; seed treasury via deposit helper
+    const depositor = Keypair.generate();
+    await airdrop(provider, depositor.publicKey, 2);
 
-    // fund user with SOL for fees (ATA creation)
-    const airdropSig = await provider.connection.requestAirdrop(
-      user.publicKey,
-      2 * anchor.web3.LAMPORTS_PER_SOL
-    );
-    await provider.connection.confirmTransaction(airdropSig, "confirmed");
-
-    // create mint (user is mint authority)
-    const mint = await createMint(
-      provider.connection,
-      user, // payer
-      user.publicKey, // mint authority
-      null, // freeze authority
-      6 // decimals
-    );
-
-    // user ATA (owned by user)
-    const userAta = await getOrCreateAssociatedTokenAccount(
-      provider.connection,
-      user, // payer
-      mint,
-      user.publicKey
-    );
-
-    // treasury ATA (owned by PDA, allow off-curve)
-    const treasuryAta = await getOrCreateAssociatedTokenAccount(
-      provider.connection,
-      user, // payer
-      mint,
+    const { mint, userAta: depositorAta, treasuryAta } = await setupMintAndAtas(
+      provider,
+      depositor,
       treasuryPda,
-      true
+      1_000_000n
     );
 
-    // ─────────────────────────────────────────────
-    // 3) Put funds in treasury ATA so withdraw has something to move
-    // ─────────────────────────────────────────────
-    const amount = 1_000_000; // 1.0 token if decimals=6
-    await mintTo(
-      provider.connection,
-      user, // payer
+    // fund treasury using depositor deposit
+    await program.methods
+      .splDeposit(new BN(900_000))
+      .accounts({
+        user: depositor.publicKey,
+        treasury: treasuryPda,
+        mint,
+        userAta: depositorAta.address,
+        treasuryAta: treasuryAta.address,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .signers([depositor])
+      .rpc();
+
+    const user = Keypair.generate(); // recipient of withdraw
+    await airdrop(provider, user.publicKey, 1);
+
+    const userAta = getAssociatedTokenAddressSync(
       mint,
-      treasuryAta.address,
-      user.publicKey, // mint authority
-      amount
+      user.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const userBefore = await getAccount(provider.connection, userAta.address);
-    const treasuryBefore = await getAccount(
-      provider.connection,
-      treasuryAta.address
-    );
+    const treasuryBefore = await getAccount(provider.connection, treasuryAta.address);
+    const userInfoBefore = await provider.connection.getAccountInfo(userAta);
 
-    console.log("User ATA before:", Number(userBefore.amount));
-    console.log("Treasury ATA before:", Number(treasuryBefore.amount));
+    const amount = 123_456;
 
-    // ─────────────────────────────────────────────
-    // 4) Withdraw: treasury -> user
-    // ─────────────────────────────────────────────
-    const sig = await program.methods
+    await program.methods
       .splWithdraw(new BN(amount))
       .accounts({
-      user: user.publicKey,
-      treasury: treasuryPda,
-      treasuryAuthority: protocolAuth.publicKey,
+        treasuryAuthority: protocolAuth.publicKey,
+        user: user.publicKey,
+        treasury: treasuryPda,
+        mint,
+        userAta,
+        treasuryAta: treasuryAta.address,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .signers([protocolAuth])
+      .rpc();
 
-      mint,
-      userAta: userAta.address,
-      treasuryAta: treasuryAta.address,
-      tokenProgram: TOKEN_PROGRAM_ID,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-    } as any)
-    .signers([protocolAuth])
-    .rpc();
+    // user ATA should be created if missing
+    expect(userInfoBefore).to.eq(null);
 
-  console.log("tx:", sig);
+    const userAfter = await getAccount(provider.connection, userAta);
+    const treasuryAfter = await getAccount(provider.connection, treasuryAta.address);
 
+    expect(Number(userAfter.amount)).to.eq(amount);
+    expect(Number(treasuryBefore.amount) - Number(treasuryAfter.amount)).to.eq(amount);
+  });
 
-    const userAfter = await getAccount(provider.connection, userAta.address);
-    const treasuryAfter = await getAccount(
-      provider.connection,
-      treasuryAta.address
+  it("B) unauthorized withdraw fails", async () => {
+    const depositor = Keypair.generate();
+    await airdrop(provider, depositor.publicKey, 2);
+
+    const { mint, userAta: depositorAta, treasuryAta } = await setupMintAndAtas(
+      provider,
+      depositor,
+      treasuryPda,
+      1_000_000n
     );
 
-    console.log("User ATA after:", Number(userAfter.amount));
-    console.log("Treasury ATA after:", Number(treasuryAfter.amount));
+    await program.methods
+      .splDeposit(new BN(900_000))
+      .accounts({
+        user: depositor.publicKey,
+        treasury: treasuryPda,
+        mint,
+        userAta: depositorAta.address,
+        treasuryAta: treasuryAta.address,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .signers([depositor])
+      .rpc();
 
-    // ─────────────────────────────────────────────
-    // 5) Assertions
-    // ─────────────────────────────────────────────
-    if (Number(userAfter.amount) !== Number(userBefore.amount) + amount) {
-      throw new Error("User ATA did not increase by expected amount");
-    }
-    if (Number(treasuryAfter.amount) !== Number(treasuryBefore.amount) - amount) {
-      throw new Error("Treasury ATA did not decrease by expected amount");
-    }
+    const attacker = Keypair.generate();
+    await airdrop(provider, attacker.publicKey, 1);
+
+    const attackerAta = getAssociatedTokenAddressSync(
+      mint,
+      attacker.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    await expectFail(
+      program.methods
+        .splWithdraw(new BN(1))
+        .accounts({
+          treasuryAuthority: attacker.publicKey, // wrong authority
+          user: attacker.publicKey,
+          treasury: treasuryPda,
+          mint,
+          userAta: attackerAta,
+          treasuryAta: treasuryAta.address,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        } as any)
+        .signers([attacker])
+        .rpc()
+    );
+  });
+
+  it("C) withdraw fails while paused", async () => {
+    const depositor = Keypair.generate();
+    await airdrop(provider, depositor.publicKey, 2);
+
+    const { mint, userAta: depositorAta, treasuryAta } = await setupMintAndAtas(
+      provider,
+      depositor,
+      treasuryPda,
+      1_000_000n
+    );
+
+    await program.methods
+      .splDeposit(new BN(900_000))
+      .accounts({
+        user: depositor.publicKey,
+        treasury: treasuryPda,
+        mint,
+        userAta: depositorAta.address,
+        treasuryAta: treasuryAta.address,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .signers([depositor])
+      .rpc();
+
+    // pause
+    await programAny.methods
+      .setTreasuryPaused(true)
+      .accounts({ treasury: treasuryPda, treasuryAuthority: protocolAuth.publicKey } as any)
+      .signers([protocolAuth])
+      .rpc();
+
+    const user = Keypair.generate();
+    await airdrop(provider, user.publicKey, 1);
+
+    const userAta = getAssociatedTokenAddressSync(
+      mint,
+      user.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    await expectFail(
+      program.methods
+        .splWithdraw(new BN(1))
+        .accounts({
+          treasuryAuthority: protocolAuth.publicKey,
+          user: user.publicKey,
+          treasury: treasuryPda,
+          mint,
+          userAta,
+          treasuryAta: treasuryAta.address,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        } as any)
+        .signers([protocolAuth])
+        .rpc()
+    );
+
+    // unpause (always)
+    await programAny.methods
+      .setTreasuryPaused(false)
+      .accounts({ treasury: treasuryPda, treasuryAuthority: protocolAuth.publicKey } as any)
+      .signers([protocolAuth])
+      .rpc();
   });
 });

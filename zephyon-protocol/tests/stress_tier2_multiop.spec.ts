@@ -1,14 +1,16 @@
 /**
  * Tier2 — Multi-Op Interleaved Chaos (Layer2B: PAY + WITHDRAW + PAUSE)
  *
- * This file is intentionally "IDL-adaptive":
- * - Stress tests validate invariants, not TS type-gen drift.
- * - We call program as `any` and adapt to actual method/account names at runtime.
+ * Canonical (post-v0.31.x):
+ * - splPay receipts are pay_count-based:
+ *   seeds = ["receipt", treasuryPda, pay_count_before(u64LE)]
  *
- * CRITICAL HARDENING:
- * - Provider is explicitly locked to protocolAuth.
- * - Program is constructed from runtime IDL bound to authorityProvider.
- * - withRetry uses shouldRetry to avoid retrying expected failures.
+ * Hardening:
+ * - Provider locked to protocolAuth (no wallet drift).
+ * - Program constructed from runtime IDL (tsgen drift-proof).
+ * - PAY steps serialized (mutex) to prevent pay_count receipt collisions.
+ * - splPay + withdraw sent via raw tx to avoid AnchorProvider.sendAndConfirm brittleness.
+ * - Pause-related preflight simulation failures are counted as rejections (expected).
  */
 
 import * as anchor from "@coral-xyz/anchor";
@@ -17,6 +19,7 @@ import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAccount,
   getOrCreateAssociatedTokenAccount,
   mintTo,
 } from "@solana/spl-token";
@@ -27,16 +30,20 @@ import {
   initFoundationOnce,
   setupMintAndAtas,
   airdrop,
-  runBounded,
-  withRetry,
   expect,
-  NONCE_PAY_BASE,
 } from "./_helpers";
 
+/* -----------------------------
+ * types + tiny utilities
+ * ----------------------------- */
 type Step =
   | { kind: "PAUSE"; paused: boolean; tag: string }
-  | { kind: "PAY"; amount: number; nonce: BN; tag: string }
+  | { kind: "PAY"; amount: number; tag: string }
   | { kind: "WITHDRAW"; amount: number; tag: string };
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 function assertProviderIsAuthority(provider: AnchorProvider, auth: PublicKey) {
   const pk = (provider.wallet as any).publicKey as PublicKey;
@@ -47,13 +54,99 @@ function assertProviderIsAuthority(provider: AnchorProvider, auth: PublicKey) {
   }
 }
 
+// runBounded(items, limit, worker)
+async function runBounded<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, idx: number) => Promise<void>
+) {
+  const queue = items.map((item, idx) => ({ item, idx }));
+  const running: Promise<void>[] = [];
+
+  async function spawn() {
+    const next = queue.shift();
+    if (!next) return;
+    await worker(next.item, next.idx);
+    await spawn();
+  }
+
+  for (let i = 0; i < limit; i++) running.push(spawn());
+  await Promise.all(running);
+}
+
+function isRetryable(e: any) {
+  const s = String(e?.message ?? e);
+  return (
+    s.includes("AccountInUse") ||
+    s.toLowerCase().includes("already in use") ||
+    s.includes("Blockhash not found") ||
+    s.includes("Transaction was not confirmed") ||
+    s.includes("Node is behind") ||
+    s.includes("429") ||
+    s.toLowerCase().includes("timeout")
+  );
+}
+
+function isPausedLikeText(s: string) {
+  const t = s.toLowerCase();
+  return (
+    t.includes("protocolpaused") ||
+    t.includes("treasurypaused") ||
+    t.includes("protocol is paused") ||
+    t.includes("paused")
+  );
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  tries = 10,
+  baseDelayMs = 80
+): Promise<T> {
+  let lastErr: any;
+  for (let i = 1; i <= tries; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastErr = e;
+
+      const msg = String(e?.message ?? e);
+      if (isPausedLikeText(msg)) throw e; // expected gating, don't retry
+
+      if (!isRetryable(e)) throw e;
+      await sleep(baseDelayMs + i * 40);
+    }
+  }
+  throw new Error(
+    `withRetry exhausted (${label}): ${String(lastErr?.message ?? lastErr)}`
+  );
+}
+
+function u64LE(n: BN): Buffer {
+  return n.toArrayLike(Buffer, "le", 8);
+}
+
+// Receipt PDA: ["receipt", treasuryPda, payCountBefore(u64LE)]
+function receiptPdaPayCount(
+  programId: PublicKey,
+  treasuryPda: PublicKey,
+  payCountBefore: BN
+): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(payCountBefore)],
+    programId
+  );
+  return pda;
+}
+
+// Pause method picker (IDL-adaptive)
 function pickPauseMethod(programAny: any): ((paused: boolean) => any) {
   const m = programAny?.methods;
   const candidates = [
-    "setPause",
-    "setTreasuryPause",
-    "setPaused",
     "setTreasuryPaused",
+    "set_treasury_paused",
+    "setPause",
+    "setPaused",
     "pause",
     "togglePause",
   ];
@@ -62,70 +155,180 @@ function pickPauseMethod(programAny: any): ((paused: boolean) => any) {
     if (typeof m?.[name] === "function") return (paused: boolean) => m[name](paused);
   }
 
+  const keys = Object.keys(m ?? {});
   throw new Error(
-    `No pause method found on program.methods. Tried: ${candidates.join(", ")}`
+    `No pause method found. Tried: ${candidates.join(", ")}. Available: ${keys.join(", ")}`
   );
 }
 
-async function callSplPayAdaptive(args: {
-  programAny: any;
-  amount: number;
-  nonce: BN;
-  accounts: Record<string, any>;
-}) {
-  const { programAny, amount, nonce, accounts } = args;
+// Async mutex to serialize PAY critical section
+function createMutex() {
+  let chain = Promise.resolve();
+  return async function lock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = chain.then(fn, fn);
+    chain = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  };
+}
 
-  // Most likely schema (your TS told us 4 args exist)
+/* -----------------------------
+ * raw tx senders
+ * ----------------------------- */
+
+// splPay raw sender (payCount-based receipt). Returns ok=false for paused preflight or paused meta.err.
+async function sendSplPayRawPayCount(args: {
+  programAny: any;
+  provider: AnchorProvider;
+  authority: Keypair;
+  treasuryPda: PublicKey;
+  treasuryAta: PublicKey;
+  mint: PublicKey;
+  recipient: PublicKey;
+  recipientAta: PublicKey;
+  amount: number;
+}): Promise<{ ok: boolean; sig: string; logs: string[]; err?: any }> {
+  const latest = await args.provider.connection.getLatestBlockhash("confirmed");
+
+  // Fetch payCountBefore (canonical receipt derivation)
+  const treasuryAcc: any = await args.programAny.account.treasury.fetch(args.treasuryPda);
+  const payCountBefore = new BN(treasuryAcc.payCount);
+
+  const receipt = receiptPdaPayCount(args.programAny.programId, args.treasuryPda, payCountBefore);
+
+  const tx = await args.programAny.methods
+    .splPay(new BN(args.amount), null, null) // ✅ current rust: 3 args
+    .accounts({
+      treasuryAuthority: args.authority.publicKey,
+      recipient: args.recipient,
+      treasury: args.treasuryPda,
+      mint: args.mint,
+      recipientAta: args.recipientAta,
+      treasuryAta: args.treasuryAta,
+      receipt,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    } as any)
+    .transaction();
+
+  tx.feePayer = args.authority.publicKey;
+  tx.recentBlockhash = latest.blockhash;
+  tx.sign(args.authority);
+
+  let sig = "";
   try {
-    return await programAny.methods
-      .splPay(new BN(amount), null, null, nonce)
-      .accounts(accounts)
-      .rpc();
-  } catch (e1: any) {
-    // Fallback: older 3-arg schema
-    try {
-      return await programAny.methods
-        .splPay(new BN(amount), null, null)
-        .accounts(accounts)
-        .rpc();
-    } catch (e2: any) {
-      // Fallback: nonce earlier
-      try {
-        return await programAny.methods
-          .splPay(new BN(amount), nonce, null, null)
-          .accounts(accounts)
-          .rpc();
-      } catch (e3: any) {
-        const msg =
-          `splPay adaptive call failed.\n` +
-          `Try1(4 args): ${String(e1?.message ?? e1)}\n` +
-          `Try2(3 args): ${String(e2?.message ?? e2)}\n` +
-          `Try3(4 args alt): ${String(e3?.message ?? e3)}\n`;
-        throw new Error(msg);
-      }
+    sig = await args.provider.connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: "confirmed",
+      maxRetries: 3,
+    });
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    const logs = (typeof e?.getLogs === "function" ? await e.getLogs() : []) as string[];
+    const joined = [msg, ...logs].join("\n");
+    if (isPausedLikeText(joined)) {
+      return { ok: false, sig: "preflight-rejected", logs, err: e };
     }
+    throw e;
   }
+
+  await args.provider.connection.confirmTransaction(
+    {
+      signature: sig,
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+    },
+    "confirmed"
+  );
+
+  const info = await args.provider.connection.getTransaction(sig, {
+    commitment: "confirmed",
+    maxSupportedTransactionVersion: 0,
+  });
+
+  const logs = info?.meta?.logMessages ?? [];
+  const ok = !info?.meta?.err;
+
+  if (!ok) {
+    const joined = logs.join("\n");
+    if (isPausedLikeText(joined)) return { ok: false, sig, logs, err: info?.meta?.err };
+  }
+
+  return { ok, sig, logs, err: info?.meta?.err };
 }
 
-async function callSplWithdraw(args: {
+// withdraw raw sender (build tx via .transaction() to avoid provider “action undefined” failures)
+async function sendWithdrawRaw(args: {
   programAny: any;
+  provider: AnchorProvider;
+  authority: Keypair;
   amount: number;
   accounts: Record<string, any>;
-}) {
-  const { programAny, amount, accounts } = args;
+}): Promise<{ ok: boolean; sig: string; logs: string[]; err?: any }> {
+  const latest = await args.provider.connection.getLatestBlockhash("confirmed");
 
-  // Current protocol schema: splWithdraw(amount)
-  return await programAny.methods
-    .splWithdraw(new BN(amount))
-    .accounts(accounts)
-    .rpc();
+  const tx = await args.programAny.methods
+    .splWithdraw(new BN(args.amount))
+    .accounts(args.accounts as any)
+    .transaction();
+
+  tx.feePayer = args.authority.publicKey;
+  tx.recentBlockhash = latest.blockhash;
+  tx.sign(args.authority);
+
+  let sig = "";
+  try {
+    sig = await args.provider.connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: "confirmed",
+      maxRetries: 3,
+    });
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    const logs = (typeof e?.getLogs === "function" ? await e.getLogs() : []) as string[];
+    const joined = [msg, ...logs].join("\n");
+    if (isPausedLikeText(joined)) {
+      return { ok: false, sig: "preflight-rejected", logs, err: e };
+    }
+    throw e;
+  }
+
+  await args.provider.connection.confirmTransaction(
+    {
+      signature: sig,
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+    },
+    "confirmed"
+  );
+
+  const info = await args.provider.connection.getTransaction(sig, {
+    commitment: "confirmed",
+    maxSupportedTransactionVersion: 0,
+  });
+
+  const logs = info?.meta?.logMessages ?? [];
+  const ok = !info?.meta?.err;
+
+  if (!ok) {
+    const joined = logs.join("\n");
+    if (isPausedLikeText(joined)) return { ok: false, sig, logs, err: info?.meta?.err };
+  }
+
+  return { ok, sig, logs, err: info?.meta?.err };
 }
+
+/* -----------------------------
+ * test
+ * ----------------------------- */
 
 describe("stress - Tier2 multiop interleaved chaos (Layer2B)", () => {
-  // Canon authority (must match tests/keys/protocol-authority.json)
   const protocolAuth: Keypair = loadProtocolAuthority();
 
-  // Provider locked to protocolAuth
   const envProvider = AnchorProvider.env();
   const authorityProvider = new AnchorProvider(
     envProvider.connection,
@@ -133,22 +336,16 @@ describe("stress - Tier2 multiop interleaved chaos (Layer2B)", () => {
     envProvider.opts
   );
 
-  // IMPORTANT: set provider BEFORE anything else
   anchor.setProvider(authorityProvider);
-
-  // Tripwire: fail fast if wallet is not what we think
   assertProviderIsAuthority(authorityProvider, protocolAuth.publicKey);
 
-  // ✅ Load IDL at runtime (no tsconfig resolveJsonModule needed)
+  // Load IDL runtime
   const idlPath = "target/idl/protocol.json";
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf8"));
-
-  // ✅ Program bound to authorityProvider (prevents signature drift)
   const programAny = new anchor.Program(idl as any, authorityProvider) as any;
   const programId = new PublicKey(idl.address);
 
   let treasuryPda: PublicKey;
-
   let mint: PublicKey;
   let treasuryAta: PublicKey;
 
@@ -158,31 +355,17 @@ describe("stress - Tier2 multiop interleaved chaos (Layer2B)", () => {
   let authUserAta: PublicKey; // withdraw destination
 
   before(async () => {
-    // Fees
     await airdrop(authorityProvider, protocolAuth.publicKey, 2);
     await airdrop(authorityProvider, recipient.publicKey, 2);
 
-    // Treasury PDA derived from programId
-    const [treasuryFromIdl] = PublicKey.findProgramAddressSync(
-      [Buffer.from("treasury")],
-      programId
-    );
-    treasuryPda = treasuryFromIdl;
+    [treasuryPda] = PublicKey.findProgramAddressSync([Buffer.from("treasury")], programId);
 
-    // Idempotent init
     await initFoundationOnce(authorityProvider, programAny);
 
-    // Mint + Treasury ATA
-    const { mint: m, treasuryAta: tAta } = await setupMintAndAtas(
-      authorityProvider,
-      protocolAuth,
-      treasuryPda,
-      1_000_000n
-    );
-    mint = m;
-    treasuryAta = tAta.address;
+    const setup = await setupMintAndAtas(authorityProvider, protocolAuth, treasuryPda, 1_000_000n);
+    mint = setup.mint;
+    treasuryAta = setup.treasuryAta.address;
 
-    // Recipient ATA (payer = protocolAuth)
     const rAta = await getOrCreateAssociatedTokenAccount(
       authorityProvider.connection,
       protocolAuth,
@@ -191,7 +374,6 @@ describe("stress - Tier2 multiop interleaved chaos (Layer2B)", () => {
     );
     recipientAta = rAta.address;
 
-    // Authority user ATA (withdraw target)
     const uAta = await getOrCreateAssociatedTokenAccount(
       authorityProvider.connection,
       protocolAuth,
@@ -200,7 +382,6 @@ describe("stress - Tier2 multiop interleaved chaos (Layer2B)", () => {
     );
     authUserAta = uAta.address;
 
-    // FUND TREASURY ATA for mixed ops
     await mintTo(
       authorityProvider.connection,
       protocolAuth,
@@ -212,31 +393,12 @@ describe("stress - Tier2 multiop interleaved chaos (Layer2B)", () => {
   });
 
   it("Layer2B: interleaves PAY + WITHDRAW + PAUSE without invariant drift", async () => {
-    const CONCURRENCY = 6;
+    const CONCURRENCY = 4; // keep signal stable
     const pauseFn = pickPauseMethod(programAny);
 
     const pauseAccounts = {
       treasury: treasuryPda,
       treasuryAuthority: protocolAuth.publicKey,
-      authority: protocolAuth.publicKey,
-      systemProgram: SystemProgram.programId,
-    };
-
-    const payAccounts = {
-      treasury: treasuryPda,
-      treasuryAuthority: protocolAuth.publicKey,
-      authority: protocolAuth.publicKey,
-
-      mint,
-      treasuryAta,
-
-      recipient: recipient.publicKey,
-      recipientAta,
-
-      tokenProgram: TOKEN_PROGRAM_ID,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
     };
 
     const withdrawAccounts = {
@@ -246,196 +408,203 @@ describe("stress - Tier2 multiop interleaved chaos (Layer2B)", () => {
       mint,
       userAta: authUserAta,
       treasuryAta,
-
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
       rent: anchor.web3.SYSVAR_RENT_PUBKEY,
     };
 
-    // ---- plan ----
+    // Ensure not paused at start
+    await withRetry(
+      async () => {
+        await pauseFn(false)
+          .accounts(pauseAccounts as any)
+          .signers([protocolAuth])
+          .rpc();
+      },
+      "unpause-start",
+      6
+    );
+
+    // Snapshot before
+    const tBefore = await getAccount(authorityProvider.connection, treasuryAta);
+    const rBefore = await getAccount(authorityProvider.connection, recipientAta);
+    const uBefore = await getAccount(authorityProvider.connection, authUserAta);
+
+    const treasuryBefore = Number(tBefore.amount);
+    const recipientBefore = Number(rBefore.amount);
+    const userBefore = Number(uBefore.amount);
+
+    // Windowed plan (guarantee both successes + rejections)
     const steps: Step[] = [];
-    const pauseEvery = 2;
-    const withdrawEvery = 3;
 
-    let paused = false;
-    let paySeq = 0;
+    // Open window (successes)
+    for (let i = 0; i < 8; i++) steps.push({ kind: "PAY", amount: 30 + i, tag: `warm-pay-${i}` });
+    for (let i = 0; i < 3; i++) steps.push({ kind: "WITHDRAW", amount: 12 + i, tag: `warm-withdraw-${i}` });
 
-    // Optional: add randomness to guarantee uniqueness even if something weird repeats seq.
-    function uniquePayNonce(seq: number): BN {
-      const salt = Math.floor(Math.random() * 1_000_000_000); // 0..1e9
-      return new BN(NONCE_PAY_BASE + seq).add(new BN(salt));
-    }
+    // Paused window (rejections)
+    steps.push({ kind: "PAUSE", paused: true, tag: "pause-on-1" });
+    for (let i = 0; i < 8; i++) steps.push({ kind: "PAY", amount: 40 + i, tag: `paused-pay-${i}` });
+    for (let i = 0; i < 3; i++) steps.push({ kind: "WITHDRAW", amount: 15 + i, tag: `paused-withdraw-${i}` });
 
-    for (let i = 1; i <= 20; i++) {
-      steps.push({
-        kind: "PAY",
-        amount: 555,
-        nonce: uniquePayNonce(paySeq++),
-        tag: `pay-${i}`,
-      });
+    // Open window again (successes)
+    steps.push({ kind: "PAUSE", paused: false, tag: "pause-off-1" });
+    for (let i = 0; i < 8; i++) steps.push({ kind: "PAY", amount: 55 + i, tag: `open2-pay-${i}` });
+    for (let i = 0; i < 3; i++) steps.push({ kind: "WITHDRAW", amount: 18 + i, tag: `open2-withdraw-${i}` });
 
-      if (i % pauseEvery === 0) {
-        paused = !paused;
-        steps.push({
-          kind: "PAUSE",
-          paused,
-          tag: `pause-${i}-${paused ? "on" : "off"}`,
-        });
-      }
+    // End unpaused (poison prevention)
+    steps.push({ kind: "PAUSE", paused: false, tag: "final-unpause" });
 
-      if (i % withdrawEvery === 0) {
-        steps.push({ kind: "WITHDRAW", amount: 111, tag: `withdraw-${i}` });
-      }
-    }
-
-    // Ensure we end unpaused on the happy path
-    if (paused) {
-      steps.push({ kind: "PAUSE", paused: false, tag: "final-unpause" });
-      paused = false;
-    }
-
-    // ---- counters (Step 4-lite) ----
+    // Counters + sums
     let pauseSets = 0;
 
     let successPays = 0;
     let rejectedPays = 0;
+    let sumPays = 0;
 
     let successWithdraws = 0;
     let rejectedWithdraws = 0;
+    let sumWithdraws = 0;
 
-    const isReceiptCollision = (msg: string) =>
-      msg.includes("already in use") || msg.includes("Allocate: account");
+    const payLock = createMutex();
 
-    const isReceiptResolutionDepth = (msg: string) =>
-      msg.includes("Unresolved accounts: `receipt`") ||
-      msg.includes("Reached maximum depth for account resolution");
-
-    // Always unpause, even if the chaos run throws
     try {
-      await runBounded(CONCURRENCY, steps, async (step, idx) => {
+      await runBounded(steps, CONCURRENCY, async (step, idx) => {
         await withRetry(
           async () => {
-            // Tripwire inside workers too
             assertProviderIsAuthority(authorityProvider, protocolAuth.publicKey);
 
             if (step.kind === "PAUSE") {
-              await pauseFn(step.paused).accounts(pauseAccounts).rpc();
+              await pauseFn(step.paused)
+                .accounts(pauseAccounts as any)
+                .signers([protocolAuth])
+                .rpc();
               pauseSets++;
               return;
             }
 
             if (step.kind === "PAY") {
-              try {
-                await callSplPayAdaptive({
+              await payLock(async () => {
+                const res = await sendSplPayRawPayCount({
                   programAny,
+                  provider: authorityProvider,
+                  authority: protocolAuth,
+                  treasuryPda,
+                  treasuryAta,
+                  mint,
+                  recipient: recipient.publicKey,
+                  recipientAta,
                   amount: step.amount,
-                  nonce: step.nonce,
-                  accounts: payAccounts,
                 });
-                successPays++;
-              } catch (e: any) {
-                const msg = String(e?.message ?? e);
 
-                if (msg.includes("ProtocolPaused")) {
-                  rejectedPays++;
-                  return; // expected
+                if (res.ok) {
+                  successPays++;
+                  sumPays += step.amount;
+                  return;
                 }
 
-                if (isReceiptCollision(msg) || isReceiptResolutionDepth(msg)) {
+                const joined = (res.logs ?? []).join("\n");
+                if (isPausedLikeText(joined)) {
                   rejectedPays++;
-                  return; // expected under chaos
+                  return;
                 }
 
-                throw e; // unexpected
-              }
-
+                console.log("splPay failed sig:", res.sig);
+                console.log("logs:\n", (res.logs ?? []).join("\n"));
+                throw new Error(`splPay failed: ${JSON.stringify(res.err)}`);
+              });
               return;
             }
 
             // WITHDRAW
-            try {
-              await callSplWithdraw({
-                programAny,
-                amount: step.amount,
-                accounts: withdrawAccounts,
-              });
+            const res = await sendWithdrawRaw({
+              programAny,
+              provider: authorityProvider,
+              authority: protocolAuth,
+              amount: step.amount,
+              accounts: withdrawAccounts as any,
+            });
+
+            if (res.ok) {
               successWithdraws++;
-            } catch (e: any) {
-              const msg = String(e?.message ?? e);
-
-              if (msg.includes("ProtocolPaused")) {
-                rejectedWithdraws++;
-                return; // expected
-              }
-
-              // Withdraw shouldn't hit receipt collisions, but keep harness robust anyway
-              if (isReceiptCollision(msg) || isReceiptResolutionDepth(msg)) {
-                rejectedWithdraws++;
-                return;
-              }
-
-              throw e;
+              sumWithdraws += step.amount;
+              return;
             }
+
+            const joined = (res.logs ?? []).join("\n");
+            if (isPausedLikeText(joined)) {
+              rejectedWithdraws++;
+              return;
+            }
+
+            console.log("withdraw failed sig:", res.sig);
+            console.log("logs:\n", (res.logs ?? []).join("\n"));
+            throw new Error(`withdraw failed: ${JSON.stringify(res.err)}`);
           },
-          {
-            label: `step-${idx}-${step.tag}`,
-            shouldRetry: (e) => {
-              const msg = String(e?.message ?? e);
-
-              // We handle these by catching+counting; don't retry.
-              if (msg.includes("ProtocolPaused")) return false;
-
-              // Real authorization/constraint issues: do not retry.
-              if (msg.includes("Unauthorized")) return false;
-              if (msg.includes("Constraint")) return false;
-
-              // Deterministic account creation/resolution issues: do not retry.
-              if (isReceiptCollision(msg)) return false;
-              if (isReceiptResolutionDepth(msg)) return false;
-
-              // Everything else: retry (RPC flakes, blockhash, etc)
-              return true;
-            },
-          }
+          `step-${idx}-${step.tag}`,
+          10
         );
       });
-
-      // Minimal sanity (Step 5 adds full invariants)
-      expect(pauseSets).to.be.greaterThan(0);
-      expect(successPays + rejectedPays).to.be.greaterThan(0);
-      expect(successWithdraws + rejectedWithdraws).to.be.greaterThan(0);
     } finally {
-      // Cleanup: force unpause so later specs aren't contaminated
-      try {
-        await withRetry(
-          async () => {
-            await pauseFn(false).accounts(pauseAccounts).rpc();
-          },
-          {
-            label: "cleanup-unpause",
-            shouldRetry: (e) => {
-              const msg = String(e?.message ?? e);
-              if (msg.includes("Constraint")) return false;
-              if (msg.includes("Unauthorized")) return false;
-              return true;
-            },
-          }
-        );
-      } catch {
-        // swallow cleanup errors (don't mask the real failure)
-      }
+      // Always unpause
+      await withRetry(
+        async () => {
+          await pauseFn(false)
+            .accounts(pauseAccounts as any)
+            .signers([protocolAuth])
+            .rpc();
+        },
+        "unpause-end",
+        6
+      );
     }
 
-    // Optional debug print
+    // Snapshot after
+    const tAfter = await getAccount(authorityProvider.connection, treasuryAta);
+    const rAfter = await getAccount(authorityProvider.connection, recipientAta);
+    const uAfter = await getAccount(authorityProvider.connection, authUserAta);
+
+    const treasuryAfter = Number(tAfter.amount);
+    const recipientAfter = Number(rAfter.amount);
+    const userAfter = Number(uAfter.amount);
+
+    const treasuryDelta = treasuryBefore - treasuryAfter;
+    const recipientDelta = recipientAfter - recipientBefore;
+    const userDelta = userAfter - userBefore;
+
+    // Sanity (must see both success + rejection)
+    expect(pauseSets).to.be.greaterThan(0);
+
+    expect(successPays).to.be.greaterThan(0);
+    expect(rejectedPays).to.be.greaterThan(0);
+
+    expect(successWithdraws).to.be.greaterThan(0);
+    expect(rejectedWithdraws).to.be.greaterThan(0);
+
+    // Invariants:
+    expect(treasuryDelta).to.eq(sumPays + sumWithdraws);
+    expect(recipientDelta).to.eq(sumPays);
+    expect(userDelta).to.eq(sumWithdraws);
+
     // eslint-disable-next-line no-console
-    console.log("Layer2B counts:", {
+    console.log("Layer2B results:", {
+      CONCURRENCY,
       pauseSets,
       successPays,
       rejectedPays,
+      sumPays,
       successWithdraws,
       rejectedWithdraws,
+      sumWithdraws,
+      treasuryBefore,
+      treasuryAfter,
+      treasuryDelta,
+      recipientBefore,
+      recipientAfter,
+      recipientDelta,
+      userBefore,
+      userAfter,
+      userDelta,
     });
   });
 });
-

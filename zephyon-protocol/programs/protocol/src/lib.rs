@@ -7,7 +7,7 @@ pub mod events;
 pub mod instructions;
 pub mod state;
 
-declare_id!("7Huo5pfufAtTyPufiZ9XZGcRLHZyPcnbsjyCDYk8G8iB");
+declare_id!("BtP7rVw9sqN4pW5RuzZJ2c4576R5pJU9yRtjrRJ7b5bM");
 
 // Re-export instruction context types so #[program] can reference them cleanly.
 use crate::instructions::{

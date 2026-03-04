@@ -12,9 +12,14 @@
 // - Invariants per mint:
 //    treasuryDelta_X == sumPays_X == recipientAggregateDelta_X
 //
-// IMPORTANT:
-// Receipt PDA seeds are ["receipt", treasuryPda, nonce(u64LE)] (NO mint seed).
-// So we MUST partition nonce ranges per mint to avoid collisions.
+// IMPORTANT (current reality):
+// Receipt PDA seeds must match what the program expects.
+// This file is IDL-adaptive:
+// - If splPay has a nonce-ish arg in the IDL => receipt seeds use that nonce
+// - Else => receipt seeds use treasury.payCount BEFORE the pay
+//
+// If payCount-based receipts: concurrent PAY can collide (two workers read same payCount).
+// So we serialize PAY in that case (PAUSE windows can still run concurrently).
 
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
@@ -30,12 +35,7 @@ import {
 } from "@solana/spl-token";
 import { expect } from "chai";
 
-import {
-  loadProtocolAuthority,
-  airdrop,
-  withRetry,
-  NONCE_PAY_BASE,
-} from "./_helpers";
+import { loadProtocolAuthority, airdrop, withRetry, NONCE_PAY_BASE } from "./_helpers";
 
 // ---------- tiny utils ----------
 type BN = anchor.BN;
@@ -44,14 +44,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function u64LE(n: anchor.BN) {
   return n.toArrayLike(Buffer, "le", 8);
-}
-
-// receipts: ["receipt", treasuryPda, nonce(u64LE)]
-function payReceiptPda(programId: PublicKey, treasuryPda: PublicKey, nonce: anchor.BN) {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(nonce)],
-    programId
-  )[0];
 }
 
 function isPauseError(e: any): boolean {
@@ -108,6 +100,57 @@ function accMetaFromIdl(acc: any) {
   return { isSigner, isWritable };
 }
 
+function splPayHasNonceArg(program: Program<any>): boolean {
+  const ixDef = getIx(program, "splPay");
+  return (ixDef.args as any[]).some((a: any) => String(a.name).toLowerCase().includes("nonce"));
+}
+
+/**
+ * Derive receipt PDA using the SAME seed value the program expects:
+ * - nonce-mode: seedValue = provided nonce
+ * - payCount-mode: seedValue = treasury.payCount (fetched right before tx)
+ */
+async function deriveReceiptPdaAdaptive(args: {
+  program: Program<any>;
+  treasuryPda: PublicKey;
+  nonceIfUsed: anchor.BN;
+}): Promise<{ receipt: PublicKey; seedValue: anchor.BN; usesNonce: boolean }> {
+  const { program, treasuryPda, nonceIfUsed } = args;
+  const programAny = program as any;
+
+  const usesNonce = splPayHasNonceArg(program);
+
+  let seedValue: anchor.BN;
+  if (usesNonce) {
+    seedValue = nonceIfUsed;
+  } else {
+    const treasuryAcc: any = await (program as any).account.treasury.fetch(treasuryPda);
+    seedValue = new anchor.BN(treasuryAcc.payCount);
+  }
+
+  const [receipt] = PublicKey.findProgramAddressSync(
+    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(seedValue)],
+    program.programId
+  );
+
+  return { receipt, seedValue, usesNonce };
+}
+
+/**
+ * Simple async mutex to serialize PAY critical section (payCount receipt safety).
+ */
+function createMutex() {
+  let chain = Promise.resolve();
+  return async function lock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = chain.then(fn, fn);
+    chain = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  };
+}
+
 // ---------- STRICT raw builders ----------
 
 async function setTreasuryPausedStrict(
@@ -150,30 +193,50 @@ async function setTreasuryPausedStrict(
 }
 
 type PayOutcome =
-  | { kind: "SUCCESS"; amount: number }
-  | { kind: "REJECT_PAUSED"; amount: number }
-  | { kind: "SKIPPED_RECEIPT_EXISTS"; amount: number };
+  | { kind: "SUCCESS"; amount: number; mintTag: "A" | "B" }
+  | { kind: "REJECT_PAUSED"; amount: number; mintTag: "A" | "B" }
+  | { kind: "SKIPPED_RECEIPT_EXISTS"; amount: number; mintTag: "A" | "B" };
 
-async function splPayStrictExplicit(
-  program: Program<any>,
-  authority: Keypair,
-  treasuryPda: PublicKey,
-  mint: PublicKey,
-  treasuryAta: PublicKey,
-  recipient: PublicKey,
-  recipientAta: PublicKey,
-  amount: number,
-  nonce: anchor.BN,
-  pausedExpected: boolean
-): Promise<PayOutcome> {
+async function splPayStrictExplicit(args: {
+  program: Program<any>;
+  authority: Keypair;
+  treasuryPda: PublicKey;
+  mint: PublicKey;
+  treasuryAta: PublicKey;
+  recipient: PublicKey;
+  recipientAta: PublicKey;
+  amount: number;
+  nonce: anchor.BN; // only used if nonce-mode
+  pausedExpected: boolean;
+  mintTag: "A" | "B";
+}): Promise<PayOutcome> {
+  const {
+    program,
+    authority,
+    treasuryPda,
+    mint,
+    treasuryAta,
+    recipient,
+    recipientAta,
+    amount,
+    nonce,
+    pausedExpected,
+    mintTag,
+  } = args;
+
   const ixDef = getIx(program, "splPay");
 
-  const receipt = payReceiptPda(program.programId, treasuryPda, nonce);
+  // Receipt PDA (adaptive to nonce vs payCount)
+  const { receipt, seedValue, usesNonce } = await deriveReceiptPdaAdaptive({
+    program,
+    treasuryPda,
+    nonceIfUsed: nonce,
+  });
 
   // If receipt already exists (rerun), treat as SKIPPED (do not count it).
   const ap = program.provider as anchor.AnchorProvider;
   const receiptInfo = await ap.connection.getAccountInfo(receipt);
-  if (receiptInfo) return { kind: "SKIPPED_RECEIPT_EXISTS", amount };
+  if (receiptInfo) return { kind: "SKIPPED_RECEIPT_EXISTS", amount, mintTag };
 
   const full: Record<string, PublicKey> = {
     treasuryAuthority: authority.publicKey,
@@ -195,7 +258,7 @@ async function splPayStrictExplicit(
     const n = String(a.name);
     if (n === "amount") argsObj[n] = bn(amount);
     else if (n.toLowerCase().includes("memo")) argsObj[n] = null;
-    else if (n.toLowerCase().includes("nonce")) argsObj[n] = nonce;
+    else if (n.toLowerCase().includes("nonce")) argsObj[n] = usesNonce ? seedValue : null;
     else argsObj[n] = null;
   }
 
@@ -226,10 +289,10 @@ async function splPayStrictExplicit(
     if (pausedExpected) {
       throw new Error("Tier3C breach: splPay succeeded while treasury paused.");
     }
-    return { kind: "SUCCESS", amount };
+    return { kind: "SUCCESS", amount, mintTag };
   } catch (e: any) {
     if (pausedExpected && isPauseError(e)) {
-      return { kind: "REJECT_PAUSED", amount };
+      return { kind: "REJECT_PAUSED", amount, mintTag };
     }
     throw e;
   }
@@ -263,7 +326,7 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
   const PAY_A = Number(process.env.TIER3C_PAY_A ?? "111");
   const PAY_B = Number(process.env.TIER3C_PAY_B ?? "222");
 
-  // Nonce partitioning: huge separation to avoid collisions across mints
+  // Nonce partitioning (only matters if program is nonce-mode)
   const NONCE_STRIDE = new anchor.BN("5000000000"); // 5b gap
   const BASE = new anchor.BN(NONCE_PAY_BASE).add(new anchor.BN(SEED).mul(new anchor.BN(1_000_000)));
 
@@ -273,6 +336,10 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
   const recipients: Keypair[] = [];
   let recipientAtasA: PublicKey[] = [];
   let recipientAtasB: PublicKey[] = [];
+
+  // If program is payCount-mode, we must serialize PAY to prevent receipt collisions.
+  let usesNonceMode = false;
+  const payLock = createMutex();
 
   before(async () => {
     const envProvider = anchor.AnchorProvider.env();
@@ -289,7 +356,7 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
     });
     anchor.setProvider(provider);
 
-    // Workspace program is cached; build fresh Program bound to our provider (Tier3B discipline)
+    // Workspace program is cached; build fresh Program bound to our provider
     // @ts-ignore
     const wsProgram = anchor.workspace.Protocol as Program<any>;
     const ctorArity = (Program as any).length;
@@ -301,11 +368,14 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
       program = new (Program as any)(idl, provider);
     }
 
+    // Determine receipt mode once
+    usesNonceMode = splPayHasNonceArg(program);
+    console.log("Tier3C receipt mode:", usesNonceMode ? "nonce-mode" : "payCount-mode");
+
     // treasury PDA
     [treasuryPda] = PublicKey.findProgramAddressSync([Buffer.from("treasury")], program.programId);
 
     // Create two new mints, mint authority = protocolAuth
-    // (We mint directly to treasury ATAs to fund them for pay streams.)
     mintA = await createMint(provider.connection, protocolAuth, protocolAuth.publicKey, null, 6);
     mintB = await createMint(provider.connection, protocolAuth, protocolAuth.publicKey, null, 6);
 
@@ -394,47 +464,56 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
 
       const unpausedTasks = Array.from({ length: unpausedN }, (_, k) => async () => {
         const idx = attemptsDone + k;
-        const r = recipients[idx % recipients.length].publicKey;
+        const rIndex = idx % recipients.length;
+        const r = recipients[rIndex].publicKey;
 
         const which = pickMint(idx);
+
+        // nonce is only meaningful in nonce-mode; otherwise ignored by receipt derivation.
         const nonce = (which === "A" ? NONCE_BASE_A : NONCE_BASE_B).add(new anchor.BN(idx + 1));
 
-        if (which === "A") {
-          const recipientAta = recipientAtasA[idx % recipients.length];
-          return splPayStrictExplicit(
-            program,
-            protocolAuth,
-            treasuryPda,
-            mintA,
-            treasuryAtaA,
-            r,
-            recipientAta,
-            PAY_A,
-            nonce,
-            false
-          );
-        } else {
-          const recipientAta = recipientAtasB[idx % recipients.length];
-          return splPayStrictExplicit(
-            program,
-            protocolAuth,
-            treasuryPda,
-            mintB,
-            treasuryAtaB,
-            r,
-            recipientAta,
-            PAY_B,
-            nonce,
-            false
-          );
-        }
+        const doPay = async () => {
+          if (which === "A") {
+            const recipientAta = recipientAtasA[rIndex];
+            return splPayStrictExplicit({
+              program,
+              authority: protocolAuth,
+              treasuryPda,
+              mint: mintA,
+              treasuryAta: treasuryAtaA,
+              recipient: r,
+              recipientAta,
+              amount: PAY_A,
+              nonce,
+              pausedExpected: false,
+              mintTag: "A",
+            });
+          } else {
+            const recipientAta = recipientAtasB[rIndex];
+            return splPayStrictExplicit({
+              program,
+              authority: protocolAuth,
+              treasuryPda,
+              mint: mintB,
+              treasuryAta: treasuryAtaB,
+              recipient: r,
+              recipientAta,
+              amount: PAY_B,
+              nonce,
+              pausedExpected: false,
+              mintTag: "B",
+            });
+          }
+        };
+
+        // If payCount-mode, serialize PAY to prevent receipt collisions under concurrency.
+        return usesNonceMode ? doPay() : payLock(doPay);
       });
 
       const unpausedResults = await boundedAll(unpausedTasks, CONCURRENCY);
       for (const out of unpausedResults) {
         if (out.kind === "SUCCESS") {
-          // classify by amount (deterministic)
-          if (out.amount === PAY_A) {
+          if (out.mintTag === "A") {
             successA++;
             sumPaysA = sumPaysA.add(bn(out.amount));
           } else {
@@ -457,40 +536,49 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
 
       const pausedTasks = Array.from({ length: pausedN }, (_, k) => async () => {
         const idx = attemptsDone + k;
-        const r = recipients[idx % recipients.length].publicKey;
+        const rIndex = idx % recipients.length;
+        const r = recipients[rIndex].publicKey;
 
         const which = pickMint(idx);
         const nonce = (which === "A" ? NONCE_BASE_A : NONCE_BASE_B).add(new anchor.BN(idx + 1));
 
-        if (which === "A") {
-          const recipientAta = recipientAtasA[idx % recipients.length];
-          return splPayStrictExplicit(
-            program,
-            protocolAuth,
-            treasuryPda,
-            mintA,
-            treasuryAtaA,
-            r,
-            recipientAta,
-            PAY_A,
-            nonce,
-            true
-          );
-        } else {
-          const recipientAta = recipientAtasB[idx % recipients.length];
-          return splPayStrictExplicit(
-            program,
-            protocolAuth,
-            treasuryPda,
-            mintB,
-            treasuryAtaB,
-            r,
-            recipientAta,
-            PAY_B,
-            nonce,
-            true
-          );
-        }
+        const doPay = async () => {
+          if (which === "A") {
+            const recipientAta = recipientAtasA[rIndex];
+            return splPayStrictExplicit({
+              program,
+              authority: protocolAuth,
+              treasuryPda,
+              mint: mintA,
+              treasuryAta: treasuryAtaA,
+              recipient: r,
+              recipientAta,
+              amount: PAY_A,
+              nonce,
+              pausedExpected: true,
+              mintTag: "A",
+            });
+          } else {
+            const recipientAta = recipientAtasB[rIndex];
+            return splPayStrictExplicit({
+              program,
+              authority: protocolAuth,
+              treasuryPda,
+              mint: mintB,
+              treasuryAta: treasuryAtaB,
+              recipient: r,
+              recipientAta,
+              amount: PAY_B,
+              nonce,
+              pausedExpected: true,
+              mintTag: "B",
+            });
+          }
+        };
+
+        // Paused window: PAY should reject. In payCount-mode, we *still* serialize to avoid any
+        // accidental receipt creation race (and keep logs deterministic).
+        return usesNonceMode ? doPay() : payLock(doPay);
       });
 
       const pausedResults = await boundedAll(pausedTasks, CONCURRENCY);
@@ -503,7 +591,9 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
       attemptsDone += pausedN;
 
       // Unpause before next loop
-      await withRetry(() => setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false), { label: "unpause-post" });
+      await withRetry(() => setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false), {
+        label: "unpause-post",
+      });
     }
 
     // Require signal
@@ -542,6 +632,7 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
 
     console.log("Tier3C Evidence:", {
       seed: SEED,
+      receiptMode: usesNonceMode ? "nonce-mode" : "payCount-mode",
       attemptsDone,
       successA,
       successB,

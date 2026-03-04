@@ -96,7 +96,7 @@ pub fn handler(ctx: Context<SplWithdraw>, amount: u64) -> Result<()> {
         mint: ctx.accounts.user_ata.mint, // again: depends on your naming
         amount,
         treasury: ctx.accounts.treasury.key(),
-        direction: PayDirection::UserToTreasury,
+        direction: PayDirection::TreasuryToUser,
         asset_kind: AssetKind::SPL,
 
         receipt: Pubkey::default(),

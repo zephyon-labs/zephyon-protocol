@@ -1,13 +1,16 @@
 /**
  * Tier1 Stress Suite
  * - Validates pause gating under concurrent load
- * - Validates splPay sequential and bounded concurrency
+ * - Validates splPay interleaved with pause flips
  * - Ensures treasury delta integrity
  * - Prevents ATA race conditions via precreation
  *
- * Verified stable: v0.29.3
+ * NOTE (post-v0.31.x):
+ * splPay receipts are pay_count-based:
+ *   seeds = ["receipt", treasuryPda, pay_count_before(u64LE)]
+ * So stress tests must derive receipt PDA from treasury.payCount (NOT nonce),
+ * and under concurrency they MUST retry on receipt seed collisions.
  */
-
 
 // tests/stress_pause_flip.spec.ts
 import * as anchor from "@coral-xyz/anchor";
@@ -38,17 +41,18 @@ import {
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
 async function waitForTx(
   connection: anchor.web3.Connection,
   sig: string,
-  commitment: anchor.web3.Commitment = "confirmed",
-  maxMs = 20_000,
-  pollMs = 500
+  finality: anchor.web3.Finality = "confirmed",
+  maxMs = 25_000,
+  pollMs = 600
 ) {
   const start = Date.now();
   while (Date.now() - start < maxMs) {
     const tx = await connection.getTransaction(sig, {
-      
+      commitment: finality,
       maxSupportedTransactionVersion: 0,
     });
     if (tx) return tx;
@@ -82,7 +86,28 @@ function isAccountInUseLike(err: any) {
   return (
     s.includes("AccountInUse") ||
     s.includes("already in use") ||
-    s.includes("account in use")
+    s.includes("account in use") ||
+    s.includes("Allocate: account")
+  );
+}
+
+function isConstraintSeedsLike(err: any) {
+  const s = String(err?.message ?? err).toLowerCase();
+  return (
+    s.includes("constraintseeds") ||
+    s.includes("2006") ||
+    s.includes("seed constraint") ||
+    s.includes("seeds constraint")
+  );
+}
+
+function isPausedLike(msgOrLogs: string) {
+  const s = msgOrLogs.toLowerCase();
+  return (
+    s.includes("protocollpaused") ||
+    s.includes("protocolpaused") ||
+    s.includes("treasurypaused") ||
+    s.includes("paused")
   );
 }
 
@@ -90,6 +115,7 @@ function isRetryable(err: any) {
   const s = String(err?.message ?? err);
   return (
     isAccountInUseLike(err) ||
+    isConstraintSeedsLike(err) ||
     s.includes("Blockhash not found") ||
     s.includes("Transaction was not confirmed") ||
     s.includes("Node is behind") ||
@@ -98,7 +124,7 @@ function isRetryable(err: any) {
   );
 }
 
-async function withRetry<T>(fn: () => Promise<T>, tries = 8, delayMs = 150) {
+async function withRetry<T>(fn: () => Promise<T>, tries = 10, delayMs = 160) {
   let lastErr: any;
   for (let i = 0; i < tries; i++) {
     try {
@@ -106,7 +132,7 @@ async function withRetry<T>(fn: () => Promise<T>, tries = 8, delayMs = 150) {
     } catch (e) {
       lastErr = e;
       if (!isRetryable(e)) throw e;
-      await sleep(delayMs + i * 50);
+      await sleep(delayMs + i * 60);
     }
   }
   throw lastErr;
@@ -116,29 +142,27 @@ function u64LE(n: anchor.BN): Buffer {
   return n.toArrayLike(Buffer, "le", 8);
 }
 
-// Pay receipt PDA for stress: ["receipt", treasuryPda, nonce(u64LE)]
+// Pay receipt PDA: ["receipt", treasuryPda, payCountBefore(u64LE)]
 function payReceiptPda(
   programId: PublicKey,
   treasuryPda: PublicKey,
-  nonce: anchor.BN
+  payCountBefore: anchor.BN
 ): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(nonce)],
+    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(payCountBefore)],
     programId
   );
   return pda;
 }
 
+async function fetchPayCount(programAny: any, treasuryPda: PublicKey): Promise<anchor.BN> {
+  const treasuryAcc: any = await programAny.account.treasury.fetch(treasuryPda);
+  return new BN(treasuryAcc.payCount);
+}
+
 /**
  * Raw tx sender for pause flips.
- * Avoids Anchor error translation + helps prevent "Unknown action 'undefined'" weirdness under load.
- *
- * IDL (confirmed from your grep):
- *   instruction: set_treasury_paused(paused: bool)
- *   accounts: treasury (writable), treasury_authority (signer)
- *
- * In Anchor TS client, accounts are camelCased:
- *   treasuryAuthority  <-- maps to treasury_authority
+ * Avoids Anchor error translation + helps prevent weirdness under load.
  */
 async function sendSetPausedRaw(
   programAny: any,
@@ -188,50 +212,34 @@ async function sendSetPausedRaw(
     "confirmed"
   );
 
-  // forensic check (optional but useful) — RPC can lag under load, so poll briefly
-let info = null as any;
-const start = Date.now();
-const maxMs = 25_000;
-const pollMs = 750;
-
-while (!info && Date.now() - start < maxMs) {
-  info = await provider.connection.getTransaction(sig, {
-    commitment: "confirmed",
-    maxSupportedTransactionVersion: 0,
-  });
+  const info = await waitForTx(provider.connection, sig, "confirmed", 25_000, 700);
   if (!info) {
-    await new Promise((r) => setTimeout(r, pollMs));
+    const st = await provider.connection.getSignatureStatus(sig, {
+      searchTransactionHistory: true,
+    });
+    throw new Error(
+      `getTransaction returned null for pause tx ${sig} (status=${JSON.stringify(st?.value)})`
+    );
   }
-}
 
-if (!info) {
-  const st = await provider.connection.getSignatureStatus(sig, {
-    searchTransactionHistory: true,
-  });
-  throw new Error(
-    `getTransaction returned null for pause tx ${sig} after ${maxMs}ms (status=${JSON.stringify(
-      st?.value
-    )})`
-  );
-}
-
-if (info.meta?.err) {
-  // eslint-disable-next-line no-console
-  console.log("PAUSE TX FAILED SIG:", sig);
-  // eslint-disable-next-line no-console
-  console.log("LOGS:\n", (info.meta.logMessages ?? []).join("\n"));
-  throw new Error(`pause tx failed: ${JSON.stringify(info.meta.err)}`);
-}
-
+  if (info.meta?.err) {
+    console.log("PAUSE TX FAILED SIG:", sig);
+    console.log("LOGS:\n", (info.meta.logMessages ?? []).join("\n"));
+    throw new Error(`pause tx failed: ${JSON.stringify(info.meta.err)}`);
+  }
 
   return sig;
 }
 
 /**
- * Raw splPay sender used inside pause flip stress.
- * Returns {ok, logs, err} instead of throwing Anchor-translated errors.
+ * Canonical splPay sender used inside pause flip stress.
+ *
+ * Behavior contract:
+ * - Returns ok=true on successful pay.
+ * - Returns ok=false with paused=true when rejected due to pause.
+ * - Retries on receipt collisions (ConstraintSeeds/AccountInUse) by refetching pay_count.
  */
-async function sendSplPayRaw(
+async function sendSplPayPayCountSafe(
   programAny: any,
   provider: anchor.AnchorProvider,
   signer: Keypair,
@@ -241,58 +249,107 @@ async function sendSplPayRaw(
     treasuryAta: PublicKey;
     recipient: PublicKey;
     recipientAta: PublicKey;
-    receipt: PublicKey;
     amount: number;
-    nonceBn: anchor.BN;
   }
-): Promise<{ sig: string; logs: string[]; ok: boolean; err?: any }> {
-  const latest = await provider.connection.getLatestBlockhash("confirmed");
+): Promise<{ sig: string; logs: string[]; ok: boolean; paused?: boolean; err?: any }> {
+  const MAX_RETRIES = 14;
 
-  const tx = await programAny.methods
-    .splPay(new BN(args.amount), null, null, args.nonceBn)
-    .accounts({
-      treasuryAuthority: signer.publicKey,
-      recipient: args.recipient,
-      treasury: args.treasuryPda,
-      mint: args.mint,
-      recipientAta: args.recipientAta,
-      treasuryAta: args.treasuryAta,
-      receipt: args.receipt,
-      tokenProgram: TOKEN_PROGRAM_ID,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-    } as any)
-    .transaction();
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const latest = await provider.connection.getLatestBlockhash("confirmed");
 
-  tx.feePayer = signer.publicKey;
-  tx.recentBlockhash = latest.blockhash;
-  tx.sign(signer);
+    // Derive receipt PDA from fresh pay_count_before
+    const payCountBefore = await fetchPayCount(programAny, args.treasuryPda);
+    const receiptPda = payReceiptPda(
+      programAny.programId,
+      args.treasuryPda,
+      payCountBefore
+    );
 
-  const sig = await provider.connection.sendRawTransaction(tx.serialize(), {
-    skipPreflight: false,
-    preflightCommitment: "confirmed",
-    maxRetries: 3,
-  });
+    try {
+      const tx = await programAny.methods
+        // ✅ Canon: splPay(amount, reference, memo)
+        .splPay(new BN(args.amount), null, null)
+        .accounts({
+          treasuryAuthority: signer.publicKey,
+          recipient: args.recipient,
+          treasury: args.treasuryPda,
+          mint: args.mint,
+          recipientAta: args.recipientAta,
+          treasuryAta: args.treasuryAta,
+          receipt: receiptPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        } as any)
+        .transaction();
 
-  await provider.connection.confirmTransaction(
-    {
-      signature: sig,
-      blockhash: latest.blockhash,
-      lastValidBlockHeight: latest.lastValidBlockHeight,
-    },
-    "confirmed"
-  );
+      tx.feePayer = signer.publicKey;
+      tx.recentBlockhash = latest.blockhash;
+      tx.sign(signer);
 
-  const info = await provider.connection.getTransaction(sig, {
-    commitment: "confirmed",
-    maxSupportedTransactionVersion: 0,
-  });
+      const sig = await provider.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: "confirmed",
+        maxRetries: 3,
+      });
 
-  const logs = info?.meta?.logMessages ?? [];
-  const ok = !info?.meta?.err;
+      await provider.connection.confirmTransaction(
+        {
+          signature: sig,
+          blockhash: latest.blockhash,
+          lastValidBlockHeight: latest.lastValidBlockHeight,
+        },
+        "confirmed"
+      );
 
-  return { sig, logs, ok, err: info?.meta?.err };
+      const info = await waitForTx(provider.connection, sig, "confirmed", 25_000, 650);
+      const logs = info?.meta?.logMessages ?? [];
+      const ok = !info?.meta?.err;
+
+      if (ok) return { sig, logs, ok: true };
+
+      const joined = logs.join("\n");
+      if (isPausedLike(joined) || isPausedLike(String(info?.meta?.err ?? ""))) {
+        return { sig, logs, ok: false, paused: true, err: info?.meta?.err };
+      }
+
+      // Collision / ordering race — retry by refetching pay_count
+      if (
+        joined.toLowerCase().includes("constraintseeds") ||
+        joined.includes("2006") ||
+        joined.toLowerCase().includes("accountinuse") ||
+        joined.toLowerCase().includes("already in use")
+      ) {
+        await sleep(40 * attempt);
+        continue;
+      }
+
+      return { sig, logs, ok: false, err: info?.meta?.err };
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+
+      // If pause bubbled up as a thrown error (rare in raw path), treat as expected reject
+      if (isPausedLike(msg)) {
+        return { sig: "thrown", logs: [msg], ok: false, paused: true, err: e };
+      }
+
+      // Collision / transient — retry
+      if ((isConstraintSeedsLike(e) || isAccountInUseLike(e) || isRetryable(e)) && attempt < MAX_RETRIES) {
+        await sleep(60 * attempt);
+        continue;
+      }
+
+      throw e;
+    }
+  }
+
+  return {
+    sig: "exhausted",
+    logs: [],
+    ok: false,
+    err: new Error("sendSplPayPayCountSafe exhausted retries"),
+  };
 }
 
 describe("stress - pause flip under load (Tier1-A)", function () {
@@ -306,9 +363,6 @@ describe("stress - pause flip under load (Tier1-A)", function () {
 
   // Always use a real Keypair signer
   const realProtocolAuth = loadProtocolAuthority();
-
-  // Nonce range MUST NOT collide with other tests
-  const BASE_NONCE = 5_000_000;
 
   it("pays interleaved with pause flips; rejects while paused; resumes cleanly", async () => {
     // knobs
@@ -344,14 +398,12 @@ describe("stress - pause flip under load (Tier1-A)", function () {
         mint,
         treasuryAta.address,
         realProtocolAuth.publicKey,
-        PAY_COUNT + 500
+        PAY_COUNT + 700
       );
     });
 
     // recipients (small set reused)
-    const recipients: Keypair[] = Array.from({ length: 25 }, () =>
-      Keypair.generate()
-    );
+    const recipients: Keypair[] = Array.from({ length: 25 }, () => Keypair.generate());
 
     // precreate recipient ATAs (Tier1 doctrine: remove ATA creation races)
     const recipientAtas = new Map<string, PublicKey>();
@@ -377,24 +429,12 @@ describe("stress - pause flip under load (Tier1-A)", function () {
       const flipper = (async () => {
         for (let i = 0; i < FLIPS; i++) {
           await withRetry(() =>
-            sendSetPausedRaw(
-              programAny,
-              provider as any,
-              treasuryPda,
-              realProtocolAuth,
-              true
-            )
+            sendSetPausedRaw(programAny, provider as any, treasuryPda, realProtocolAuth, true)
           );
           await sleep(FLIP_DELAY_MS);
 
           await withRetry(() =>
-            sendSetPausedRaw(
-              programAny,
-              provider as any,
-              treasuryPda,
-              realProtocolAuth,
-              false
-            )
+            sendSetPausedRaw(programAny, provider as any, treasuryPda, realProtocolAuth, false)
           );
           await sleep(FLIP_DELAY_MS);
         }
@@ -416,54 +456,30 @@ describe("stress - pause flip under load (Tier1-A)", function () {
               ASSOCIATED_TOKEN_PROGRAM_ID
             );
 
-          const nonceBn = new BN(BASE_NONCE + i);
-          const receipt = payReceiptPda(program.programId, treasuryPda, nonceBn);
+          const result = await sendSplPayPayCountSafe(programAny, provider as any, realProtocolAuth, {
+            treasuryPda,
+            mint,
+            treasuryAta: treasuryAta.address,
+            recipient: recipient.publicKey,
+            recipientAta,
+            amount: PAY_AMOUNT,
+          });
 
-          try {
-            const result = await withRetry(() =>
-              sendSplPayRaw(programAny, provider as any, realProtocolAuth, {
-                treasuryPda,
-                mint,
-                treasuryAta: treasuryAta.address,
-                recipient: recipient.publicKey,
-                recipientAta,
-                receipt,
-                amount: PAY_AMOUNT,
-                nonceBn,
-              })
-            );
-
-            if (result.ok) {
-              allowedPays++;
-              return;
-            }
-
-            const joined = (result.logs ?? []).join("\n");
-            const looksPaused =
-              joined.includes("TreasuryPaused") ||
-              joined.includes("ProtocolPaused") ||
-              joined.toLowerCase().includes("paused");
-
-            if (looksPaused) {
-              rejectedPays++;
-              return;
-            }
-
-            // Not pause-related => real failure: print forensic payload
-            // eslint-disable-next-line no-console
-            console.log("SPLPAY FAILED SIG:", result.sig);
-            // eslint-disable-next-line no-console
-            console.log("LOGS:\n", joined);
-            throw new Error(`splPay failed: ${JSON.stringify(result.err)}`);
-          } catch (e: any) {
-            const msg = String(e?.message ?? e);
-            const looksPaused =
-              msg.includes("TreasuryPaused") ||
-              msg.includes("ProtocolPaused") ||
-              msg.toLowerCase().includes("paused");
-            if (!looksPaused) throw e;
-            rejectedPays++;
+          if (result.ok) {
+            allowedPays++;
+            return;
           }
+
+          if (result.paused) {
+            rejectedPays++;
+            return;
+          }
+
+          // Not pause-related => real failure: print forensic payload
+          const joined = (result.logs ?? []).join("\n");
+          console.log("SPLPAY FAILED SIG:", result.sig);
+          console.log("LOGS:\n", joined);
+          throw new Error(`splPay failed: ${JSON.stringify(result.err)}`);
         });
       })();
 
@@ -471,16 +487,9 @@ describe("stress - pause flip under load (Tier1-A)", function () {
     } finally {
       // hard guarantee: unpause at the end (prevents poisoning other tests)
       await withRetry(
-        () =>
-          sendSetPausedRaw(
-            programAny,
-            provider as any,
-            treasuryPda,
-            realProtocolAuth,
-            false
-          ),
-        6,
-        120
+        () => sendSetPausedRaw(programAny, provider as any, treasuryPda, realProtocolAuth, false),
+        8,
+        160
       );
     }
 
@@ -491,11 +500,12 @@ describe("stress - pause flip under load (Tier1-A)", function () {
     const delta = beforeAmt - afterAmt;
 
     // assertions
-    expect(rejectedPays).to.be.greaterThan(0);
-    expect(allowedPays).to.be.greaterThan(0);
-    expect(delta).to.eq(allowedPays * PAY_AMOUNT);
+   expect(rejectedPays).to.be.greaterThan(0);
+expect(allowedPays).to.be.greaterThan(0);
+expect(allowedPays).to.be.lessThan(PAY_COUNT); // not “everything passed”
+expect(allowedPays).to.be.at.most(Math.floor(PAY_COUNT * 0.35)); // chaos should reject most
+expect(delta).to.eq(allowedPays * PAY_AMOUNT);
 
-    // eslint-disable-next-line no-console
     console.log({
       PAY_COUNT,
       CONCURRENCY,
@@ -508,7 +518,6 @@ describe("stress - pause flip under load (Tier1-A)", function () {
     });
   });
 });
-
 
 
 

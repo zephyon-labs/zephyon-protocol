@@ -29,12 +29,7 @@ import {
 } from "@solana/spl-token";
 import { expect } from "chai";
 
-import {
-  loadProtocolAuthority,
-  airdrop,
-  withRetry,
-  NONCE_PAY_BASE,
-} from "./_helpers";
+import { loadProtocolAuthority, airdrop, withRetry, NONCE_PAY_BASE } from "./_helpers";
 
 // ---------- tiny utils ----------
 type BN = anchor.BN;
@@ -100,12 +95,61 @@ function accMetaFromIdl(acc: any) {
   return { isSigner, isWritable };
 }
 
-// Pay receipts: ["receipt", treasuryPda, nonce(u64LE)]
-function payReceiptPda(programId: PublicKey, treasuryPda: PublicKey, nonce: anchor.BN) {
+/* -----------------------------
+ * Receipt derivation (ADAPTIVE)
+ * ----------------------------- */
+
+/**
+ * Detect whether IDL splPay has a nonce-ish argument.
+ * If YES => receipt seed is nonce (nonce-mode).
+ * If NO  => receipt seed is treasury.payCount BEFORE pay (payCount-mode).
+ */
+function splPayHasNonceArg(program: Program<any>): boolean {
+  const ix = (program.idl.instructions as any[]).find((i) => i.name === "splPay");
+  if (!ix) throw new Error("IDL missing instruction splPay");
+  return (ix.args as any[]).some((a) => String(a.name).toLowerCase().includes("nonce"));
+}
+
+function receiptPda(programId: PublicKey, treasuryPda: PublicKey, seedValue: anchor.BN): PublicKey {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(nonce)],
+    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(seedValue)],
     programId
   )[0];
+}
+
+async function deriveReceiptPdaAdaptive(args: {
+  program: Program<any>;
+  treasuryPda: PublicKey;
+  nonceIfUsed: anchor.BN;
+}): Promise<{ receipt: PublicKey; seedValue: anchor.BN; usesNonce: boolean }> {
+  const { program, treasuryPda, nonceIfUsed } = args;
+
+  const usesNonce = splPayHasNonceArg(program);
+
+  let seedValue: anchor.BN;
+  if (usesNonce) {
+    seedValue = nonceIfUsed;
+  } else {
+    // payCount-mode: read payCountBefore from treasury account
+    const programAny = program as any; // avoid TS "account namespace" complaints
+    const treasuryAcc: any = await programAny.account.treasury.fetch(treasuryPda);
+    seedValue = new anchor.BN(treasuryAcc.payCount);
+  }
+
+  return { receipt: receiptPda(program.programId, treasuryPda, seedValue), seedValue, usesNonce };
+}
+
+/**
+ * Simple async mutex for serializing PAY critical section when in payCount-mode.
+ * If two PAYs fetch payCount simultaneously, they derive the SAME receipt PDA => collision.
+ */
+function createMutex() {
+  let chain = Promise.resolve();
+  return async function lock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = chain.then(fn, fn);
+    chain = next.then(() => undefined, () => undefined);
+    return next;
+  };
 }
 
 // ---------- STRICT raw instruction builders ----------
@@ -154,21 +198,29 @@ type PayAttemptOutcome =
   | { kind: "REJECT_PAUSED"; amount: number }
   | { kind: "SKIPPED_RECEIPT_EXISTS"; amount: number };
 
-async function splPayStrict(
-  program: Program<any>,
-  authority: Keypair,
-  treasuryPda: PublicKey,
-  mint: PublicKey,
-  recipient: PublicKey,
-  amount: number,
-  nonce: anchor.BN,
-  pausedExpected: boolean
-): Promise<PayAttemptOutcome> {
+async function splPayStrict(args: {
+  program: Program<any>;
+  authority: Keypair;
+  treasuryPda: PublicKey;
+  mint: PublicKey;
+  recipient: PublicKey;
+  amount: number;
+  nonce: anchor.BN; // used only if nonce-mode; still required for determinism / rerun-skip
+  pausedExpected: boolean;
+}): Promise<PayAttemptOutcome> {
+  const { program, authority, treasuryPda, mint, recipient, amount, nonce, pausedExpected } = args;
+
   const ixDef = getIx(program, "splPay");
 
   const treasuryAta = getAssociatedTokenAddressSync(mint, treasuryPda, true);
   const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false);
-  const receipt = payReceiptPda(program.programId, treasuryPda, nonce);
+
+  // 🔥 ADAPTIVE receipt derivation (nonce-mode vs payCount-mode)
+  const { receipt } = await deriveReceiptPdaAdaptive({
+    program,
+    treasuryPda,
+    nonceIfUsed: nonce,
+  });
 
   // If receipt already exists, treat as SKIPPED (do NOT count amount).
   // This keeps invariants honest on reruns.
@@ -193,13 +245,15 @@ async function splPayStrict(
   };
 
   // Build args object based on IDL arg names (amount + nonce-like + memo-like)
+  // If IDL has no nonce arg (payCount-mode), this will simply not include it.
   const argsObj: any = {};
   for (const a of ixDef.args as any[]) {
-    const n = String(a.name);
-    if (n === "amount") argsObj[n] = bn(amount);
-    else if (n.toLowerCase().includes("memo")) argsObj[n] = null;
-    else if (n.toLowerCase().includes("nonce")) argsObj[n] = nonce;
-    else argsObj[n] = null;
+    const name = String(a.name);
+    const lower = name.toLowerCase();
+    if (name === "amount") argsObj[name] = bn(amount);
+    else if (lower.includes("memo")) argsObj[name] = null;
+    else if (lower.includes("nonce")) argsObj[name] = nonce;
+    else argsObj[name] = null;
   }
 
   const data = program.coder.instruction.encode("splPay", argsObj);
@@ -270,13 +324,12 @@ describe("stress - Tier4 adversarial scheduler (SEEDed, STRICT)", () => {
 
   const recipients: Keypair[] = [];
 
-  // Deterministic nonce base:
-  // - uses NONCE_PAY_BASE namespace
-  // - stable per SEED (replayable)
-  //
-  // If you always run against a fresh local validator per test, this is perfect.
-  // If you sometimes rerun without reset, SKIPPED_RECEIPT_EXISTS keeps invariants correct.
+  // Deterministic nonce base (still used for replayability + rerun skip logic)
   const RUN_NONCE_BASE = new anchor.BN(NONCE_PAY_BASE).add(new anchor.BN(SEED).mul(new anchor.BN(1_000_000)));
+
+  // receipt mode + pay mutex (initialized in before)
+  let usesNonceMode = false;
+  const payLock = createMutex();
 
   before(async () => {
     const envProvider = anchor.AnchorProvider.env();
@@ -315,52 +368,44 @@ describe("stress - Tier4 adversarial scheduler (SEEDed, STRICT)", () => {
     // Derive treasury PDA
     [treasuryPda] = PublicKey.findProgramAddressSync([Buffer.from("treasury")], program.programId);
 
-    // Discover treasury token account + mint (must already be funded)
-    // Create a fresh mint for Tier3B (self-contained, no suite coupling)
-mint = await createMint(
-  provider.connection,
-  protocolAuth,              // payer
-  protocolAuth.publicKey,    // mint authority
-  null,
-  6
-);
-
-// Create treasury ATA for this mint
-treasuryAtaPk = getAssociatedTokenAddressSync(mint, treasuryPda, true);
-const treasuryAtaInfo = await provider.connection.getAccountInfo(treasuryAtaPk);
-if (!treasuryAtaInfo) {
-  const ix = createAssociatedTokenAccountInstruction(
-    protocolAuth.publicKey, // payer
-    treasuryAtaPk,
-    treasuryPda,            // owner (PDA)
-    mint,
-    TOKEN_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
-  await withRetry(
-  async () => {
-    const tx = new anchor.web3.Transaction().add(ix);
-    return provider.sendAndConfirm(tx, [protocolAuth], {
-      commitment: "confirmed",
-    });
-  },
-  { retries: 6, baseDelayMs: 250, label: "tier4-create-treasury-ata" }
-);
-}
-
-// Fund treasury ATA so splPay can never run dry
-await withRetry(
-  () =>
-    mintTo(
+    // Fresh mint for Tier4 (self-contained)
+    mint = await createMint(
       provider.connection,
-      protocolAuth,
-      mint,
-      treasuryAtaPk,
-      protocolAuth.publicKey,
-      5_000_000
-    ),
-  { retries: 6, baseDelayMs: 250, label: "tier4-mintTo" }
-);
+      protocolAuth, // payer
+      protocolAuth.publicKey, // mint authority
+      null,
+      6
+    );
+
+    // Create treasury ATA for this mint
+    treasuryAtaPk = getAssociatedTokenAddressSync(mint, treasuryPda, true);
+    const treasuryAtaInfo = await provider.connection.getAccountInfo(treasuryAtaPk);
+    if (!treasuryAtaInfo) {
+      const ix = createAssociatedTokenAccountInstruction(
+        protocolAuth.publicKey, // payer
+        treasuryAtaPk,
+        treasuryPda, // owner (PDA)
+        mint,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      );
+      await withRetry(
+        async () => {
+          const tx = new anchor.web3.Transaction().add(ix);
+          return provider.sendAndConfirm(tx, [protocolAuth], {
+            commitment: "confirmed",
+          });
+        },
+        { retries: 6, baseDelayMs: 250, label: "tier4-create-treasury-ata" }
+      );
+    }
+
+    // Fund treasury ATA so splPay can never run dry
+    await withRetry(
+      () =>
+        mintTo(provider.connection, protocolAuth, mint, treasuryAtaPk, protocolAuth.publicKey, 5_000_000),
+      { retries: 6, baseDelayMs: 250, label: "tier4-mintTo" }
+    );
 
     // Build recipients + fund ATA rent
     recipients.length = 0;
@@ -381,6 +426,11 @@ await withRetry(
 
     // Normalize: start unpaused
     await setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false);
+
+    // Decide receipt mode ONCE for this run (based on IDL)
+    usesNonceMode = splPayHasNonceArg(program);
+    // eslint-disable-next-line no-console
+    console.log("Tier4 receipt mode:", usesNonceMode ? "nonce-mode" : "payCount-mode");
   });
 
   it("Tier4: seeded adversarial schedule preserves invariants", async () => {
@@ -419,7 +469,6 @@ await withRetry(
       const burstWorkers = randInt(rng, MIN_WORKERS, MAX_WORKERS);
       const burstSize = Math.min(burstWorkers, TOTAL_ATTEMPTS - attemptsDone);
 
-      // fire burst with bounded concurrency (burstSize = concurrency here)
       const tasks = Array.from({ length: burstSize }, (_, k) => async () => {
         // jitter
         const delay = randInt(rng, MIN_DELAY_MS, MAX_DELAY_MS);
@@ -429,20 +478,34 @@ await withRetry(
         const recipient = recipients[attemptIndex % recipients.length].publicKey;
         const amount = randInt(rng, MIN_PAY, MAX_PAY);
 
+        // Deterministic nonce (used in nonce-mode, and still useful for rerun skip)
         const nonce = RUN_NONCE_BASE.add(new anchor.BN(attemptIndex + 1));
 
-        const outcome = await withRetry(
-          () => splPayStrict(program, protocolAuth, treasuryPda, mint, recipient, amount, nonce, paused),
-          {
-            label: "splPayStrict",
-            // default shouldRetry is good; it won't retry logical pause errors
-          }
-        );
+        // In payCount-mode we MUST serialize PAY, otherwise receipt seed collisions happen.
+        const doPay = () =>
+          withRetry(
+            () =>
+              splPayStrict({
+                program,
+                authority: protocolAuth,
+                treasuryPda,
+                mint,
+                recipient,
+                amount,
+                nonce,
+                pausedExpected: paused,
+              }),
+            { label: "splPayStrict" }
+          );
 
-        return outcome;
+        if (usesNonceMode) {
+          return doPay();
+        }
+
+        // payCount-mode: serialize PAY critical section
+        return payLock(doPay);
       });
 
-      // Run them concurrently
       const results = await Promise.all(tasks.map((t) => t()));
 
       for (const r of results) {
@@ -472,6 +535,7 @@ await withRetry(
     // Evidence print
     console.log("Tier4 Evidence:", {
       seed: SEED,
+      receiptMode: usesNonceMode ? "nonce-mode" : "payCount-mode",
       attemptsDone,
       successCount,
       rejectCount,
@@ -483,7 +547,6 @@ await withRetry(
     });
 
     // Invariants
-    // We require at least some successes and some rejects for a meaningful run.
     expect(successCount).to.be.greaterThan(0);
     expect(rejectCount).to.be.greaterThan(0);
 
@@ -491,8 +554,7 @@ await withRetry(
     expect(recipientAggregateDelta.eq(sumSuccessfulPays), "recipientAggregateDelta != sumSuccessfulPays").to.eq(true);
   });
 
-after(async () => {
-  await setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false);
-});
-
+  after(async () => {
+    await setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false);
+  });
 });

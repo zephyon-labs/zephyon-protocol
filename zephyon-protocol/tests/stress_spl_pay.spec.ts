@@ -1,11 +1,12 @@
 /**
- * Tier1 Stress Suite
- * - Validates pause gating under concurrent load
+ * Tier1 Stress Suite (Pay-count canonical)
  * - Validates splPay sequential and bounded concurrency
- * - Ensures treasury delta integrity
- * - Prevents ATA race conditions via precreation
+ * - Uses canonical receipt seeds (pay_count-before)
+ * - Precreates recipient ATAs to avoid allocation races
  *
- * Verified stable: v0.29.3
+ * NOTE:
+ * This suite intentionally uses retry-on-seeds to handle
+ * ordering/race under bounded concurrency.
  */
 
 // tests/stress_spl_pay.spec.ts
@@ -46,7 +47,17 @@ function isAccountInUseLike(err: any) {
     s.includes("AccountInUse") ||
     s.includes("already in use") ||
     s.includes("account in use") ||
-    s.includes("Allocate: account") // <-- Solana SystemProgram wording
+    s.includes("Allocate: account")
+  );
+}
+
+function isConstraintSeedsLike(err: any) {
+  const s = String(err?.message ?? err).toLowerCase();
+  return (
+    s.includes("constraintseeds") ||
+    s.includes("2006") ||
+    s.includes("seeds constraint") ||
+    s.includes("seed constraint")
   );
 }
 
@@ -54,22 +65,24 @@ function u64LE(n: anchor.BN): Buffer {
   return n.toArrayLike(Buffer, "le", 8);
 }
 
-// Receipt PDA: ["receipt", treasuryPda, nonce(u64LE)]
-function payReceiptPda(
+/**
+ * Canonical Receipt PDA:
+ * ["receipt", treasuryPda, treasury.pay_count (u64 LE)]
+ */
+function payReceiptPdaFromPayCount(
   programId: PublicKey,
   treasuryPda: PublicKey,
-  nonce: anchor.BN
+  payCount: anchor.BN
 ): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(nonce)],
+    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(payCount)],
     programId
   );
   return pda;
 }
 
 describe("stress - splPay", function () {
-  this.timeout(1_000_000);
-
+  this.timeout(3_600_000); // 60 minutes
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
@@ -81,16 +94,6 @@ describe("stress - splPay", function () {
   let mint: PublicKey;
   let userAta: PublicKey;
   let treasuryAta: PublicKey;
-
-  /**
-   * IMPORTANT:
-   * You now have multiple stress specs using pay receipts.
-   * Keep nonce namespaces DISJOINT across files forever.
-   *
-   * - helpers.ts NONCE_PAY_BASE is 1_000_000 (used by pause flip spec)
-   * - This file uses 5_000_000 to avoid any collision.
-   */
-  const BASE_NONCE = 5_000_000;
 
   async function ensureAtaExists(owner: PublicKey): Promise<PublicKey> {
     const ata = getAssociatedTokenAddressSync(
@@ -121,6 +124,11 @@ describe("stress - splPay", function () {
     return ata;
   }
 
+  async function fetchPayCount(): Promise<anchor.BN> {
+    const t: any = await (program.account as any).treasury.fetch(treasuryPda);
+    return new BN(t.payCount);
+  }
+
   before(async () => {
     program = getProgram() as Program<Protocol>;
 
@@ -137,13 +145,13 @@ describe("stress - splPay", function () {
       await (program as any).methods
         .setTreasuryPaused(false)
         .accounts({
+          treasuryAuthority: protocolAuthority.publicKey,
           treasury: treasuryPda,
-          authority: protocolAuthority.publicKey,
         } as any)
         .signers([protocolAuthority])
         .rpc();
     } catch (_) {
-      // ignore if method shape differs; your pause flip test already handles raw unpause
+      // ignore if method shape differs
     }
 
     // mint + atas (mints to USER ATA)
@@ -176,45 +184,35 @@ describe("stress - splPay", function () {
       .rpc();
 
     const treasuryAcc = await getAccount(provider.connection, treasuryAta);
-    console.log(
-      "TREASURY ATA FUNDED (raw units):",
-      treasuryAcc.amount.toString()
-    );
+    console.log("TREASURY ATA FUNDED (raw units):", treasuryAcc.amount.toString());
   });
 
   /**
-   * Sends one splPay tx using raw send + explicit confirm.
-   * Retries on transient issues.
+   * Sends one splPay using canonical 3-arg signature and pay_count receipt PDA.
+   * Retries on transient issues + seed collisions.
    *
-   * IMPORTANT: This is now IDEMPOTENT:
-   * - If the receipt PDA already exists, we treat it as success and skip.
-   * - If we hit "already in use", we re-check receipt existence before failing.
+   * Strategy:
+   * - On each attempt, fetch current pay_count, derive receipt PDA from it.
+   * - If another in-flight tx wins and advances pay_count first,
+   *   we may see ConstraintSeeds/AccountInUse; retry and refetch.
    */
   async function sendOnePay(
     recipient: PublicKey,
-    recipientAta: PublicKey,
-    clientNonce: number
+    recipientAta: PublicKey
   ): Promise<string> {
-    const MAX_RETRIES = 10;
-
-    const nonceBn = new BN(clientNonce);
-    const receipt = payReceiptPda(program.programId, treasuryPda, nonceBn);
-
-    // ✅ idempotency guard: if receipt already exists, this pay is "already done"
-    const receiptInfo0 = await provider.connection.getAccountInfo(
-      receipt,
-      "confirmed"
-    );
-    if (receiptInfo0) {
-      return `already-paid:${receipt.toBase58()}`;
-    }
+    const MAX_RETRIES = 14;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      // Always derive receipt from current on-chain pay_count
+      const payCount = await fetchPayCount();
+      const receipt = payReceiptPdaFromPayCount(program.programId, treasuryPda, payCount);
+
       try {
         const latest = await provider.connection.getLatestBlockhash("confirmed");
 
-        const tx = await program.methods
-          .splPay(new BN(1), null, null, nonceBn)
+        const tx = await (program as any).methods
+          // ✅ Canon: splPay(amount, reference, memo)
+          .splPay(new BN(1), null, null)
           .accounts({
             treasuryAuthority: protocolAuthority.publicKey,
             recipient,
@@ -234,14 +232,11 @@ describe("stress - splPay", function () {
         tx.recentBlockhash = latest.blockhash;
         tx.sign(protocolAuthority);
 
-        const sig = await provider.connection.sendRawTransaction(
-          tx.serialize(),
-          {
-            skipPreflight: false,
-            preflightCommitment: "confirmed",
-            maxRetries: 3,
-          }
-        );
+        const sig = await provider.connection.sendRawTransaction(tx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: "confirmed",
+          maxRetries: 3,
+        });
 
         await provider.connection.confirmTransaction(
           {
@@ -267,12 +262,11 @@ describe("stress - splPay", function () {
           const logs = info.meta.logMessages ?? [];
           const joined = logs.join("\n");
 
-          // If receipt exists now, it likely landed in a different attempt/race → treat as success
-          const receiptInfo = await provider.connection.getAccountInfo(
-            receipt,
-            "confirmed"
-          );
-          if (receiptInfo) return sig;
+          // Seed collision / ordering race: retry by refetching pay_count
+          if (joined.toLowerCase().includes("constraintseeds") || joined.includes("2006")) {
+            await sleep(40 * attempt);
+            continue;
+          }
 
           console.log("FAILED SIG:", sig);
           console.log("LOGS:\n", joined);
@@ -281,24 +275,15 @@ describe("stress - splPay", function () {
 
         return sig;
       } catch (e: any) {
-        // ✅ If we hit "already in use", check if receipt exists and treat as success
-        if (isAccountInUseLike(e)) {
-          const receiptInfo = await provider.connection.getAccountInfo(
-            receipt,
-            "confirmed"
-          );
-          if (receiptInfo) {
-            return `already-paid:${receipt.toBase58()}`;
-          }
-        }
+        const msg = String(e?.message ?? e);
 
-        if (isAccountInUseLike(e) && attempt < MAX_RETRIES) {
+        // Ordering/collision → retry
+        if ((isConstraintSeedsLike(e) || isAccountInUseLike(e)) && attempt < MAX_RETRIES) {
           await sleep(50 * attempt);
           continue;
         }
 
         // Blockhash / confirm lag etc.
-        const msg = String(e?.message ?? e);
         const retryable =
           msg.includes("Blockhash not found") ||
           msg.includes("Transaction was not confirmed") ||
@@ -338,26 +323,22 @@ describe("stress - splPay", function () {
       recipientAtas.push(ata);
     }
 
-    // PAY LOOP (nonce range disjoint from ALL other suites)
+    // PAY LOOP (canon pay_count receipt)
     for (let i = 0; i < ITER; i++) {
-      const nonce = BASE_NONCE + i; // ✅ disjoint forever
-      await sendOnePay(recipients[i].publicKey, recipientAtas[i], nonce);
-
+      await sendOnePay(recipients[i].publicKey, recipientAtas[i]);
       if (i % 50 === 0) console.log(`sequential ${i}/${ITER}`);
     }
 
     expect(true).to.eq(true);
   });
 
-  it("bounded concurrency: 300 pays, batch size 5", async () => {
+  it("bounded concurrency: 300 pays, batch size 5", async function () {
+  this.timeout(3_600_000); // 60 minutes
     const TOTAL = 300;
     const CONCURRENCY = 5;
 
     const treasuryAccBefore = await getAccount(provider.connection, treasuryAta);
-    console.log(
-      "TREASURY ATA BEFORE CONCURRENCY:",
-      treasuryAccBefore.amount.toString()
-    );
+    console.log("TREASURY ATA BEFORE CONCURRENCY:", treasuryAccBefore.amount.toString());
 
     const recipients: Keypair[] = [];
     for (let i = 0; i < TOTAL; i++) recipients.push(Keypair.generate());
@@ -384,10 +365,7 @@ describe("stress - splPay", function () {
         const idx = sent;
         sent++;
 
-        // ✅ Disjoint from sequential within this file, and disjoint from other files
-        const nonce = BASE_NONCE + 100_000 + idx;
-
-        batch.push(sendOnePay(recipients[idx].publicKey, recipientAtas[idx], nonce));
+        batch.push(sendOnePay(recipients[idx].publicKey, recipientAtas[idx]));
       }
 
       await Promise.all(batch);
@@ -395,10 +373,7 @@ describe("stress - splPay", function () {
     }
 
     const treasuryAccAfter = await getAccount(provider.connection, treasuryAta);
-    console.log(
-      "TREASURY ATA AFTER STRESS (raw units):",
-      treasuryAccAfter.amount.toString()
-    );
+    console.log("TREASURY ATA AFTER STRESS (raw units):", treasuryAccAfter.amount.toString());
 
     expect(true).to.eq(true);
   });

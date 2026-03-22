@@ -5,6 +5,9 @@ pub enum ErrorCode {
     #[msg("Protocol is paused.")]
     ProtocolPaused,
 
+    #[msg("Counter overflow")]
+    CounterOverflow,
+
     #[msg("Amount must be greater than 0.")]
     InvalidAmount,
 

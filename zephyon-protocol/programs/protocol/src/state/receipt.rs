@@ -1,42 +1,72 @@
 use anchor_lang::prelude::*;
 
+/// Canonical on-chain receipt record.
+///
+/// Important:
+/// - Receipt semantics are flow-specific.
+/// - Different instructions may derive receipt PDAs differently.
+/// - The stored `direction`, `asset_kind`, `mint`, and `tx_count` fields
+///   are the durable source of truth for downstream indexing and audits.
+///
+/// Current direction values:
+/// - 1 = deposit
+/// - 2 = withdraw
+/// - 3 = pay
+///
+/// Current asset kind values:
+/// - 0 = unknown
+/// - 1 = SOL
+/// - 2 = SPL
 #[account]
 pub struct Receipt {
-    /// User wallet (NOT the user_profile PDA)
+    /// Counterparty / user wallet associated with this receipt.
+    ///
+    /// Notes:
+    /// - For deposit/withdraw flows, this is the user wallet involved.
+    /// - For pay flows, this is the recipient wallet.
     pub user: Pubkey,
 
-    /// 0 = deposit, 1 = withdraw, 2 = pay
+    /// Flow direction discriminator.
     pub direction: u8,
 
-
-    /// 0 = SOL, 1 = SPL
+    /// Asset kind discriminator.
     pub asset_kind: u8,
 
-    /// SPL mint, or Pubkey::default() for SOL
+    /// SPL mint for SPL flows, or Pubkey::default() for SOL flows.
     pub mint: Pubkey,
 
-    /// Amount transferred (lamports for SOL, raw token units for SPL)
+    /// Amount transferred.
+    /// - SOL: lamports
+    /// - SPL: raw token units
     pub amount: u64,
 
-    /// Fee charged (same unit as amount; 0 for now if unused)
+    /// Fee charged in the same unit as `amount`.
+    /// Zero when unused.
     pub fee: u64,
 
-    /// User balance before (same unit as amount; for SPL, token units in user ATA)
+    /// User-side balance snapshot before the operation.
+    /// Zero when not captured by the flow.
     pub pre_balance: u64,
 
-    /// User balance after (same unit as amount; for SPL, token units in user ATA)
+    /// User-side balance snapshot after the operation.
+    /// Zero when not captured by the flow.
     pub post_balance: u64,
 
-    /// Unix timestamp at receipt creation
+    /// Unix timestamp at receipt creation.
     pub ts: i64,
 
-    /// Snapshot of user_profile.tx_count BEFORE increment
+    /// Canonical per-flow index snapshot captured when this receipt was created.
+    ///
+    /// Notes:
+    /// - This is not universally "user_profile.tx_count".
+    /// - For current SPL pay flows, this stores `treasury.pay_count` BEFORE increment.
+    /// - Other flows may use different indexing semantics.
     pub tx_count: u64,
 
-    /// PDA bump
+    /// PDA bump.
     pub bump: u8,
 
-    /// Extensible payload
+    /// Fixed-size extension payload for future-proof metadata.
     pub v2: ReceiptV2Ext,
 }
 
@@ -49,67 +79,78 @@ impl Receipt {
     pub const ASSET_SOL: u8 = 1;
     pub const ASSET_SPL: u8 = 2;
 
-
-    /// Space excluding the 8-byte discriminator (Anchor adds that separately in init via `space = 8 + ...`)
-    pub const LEN: usize = 32 + // user
-        1  + // direction
-        1  + // asset_kind
-        32 + // mint
-        8  + // amount
-        8  + // fee
-        8  + // pre_balance
-        8  + // post_balance
-        8  + // ts (i64)
-        8  + // tx_count
-        1  + // bump
-        ReceiptV2Ext::LEN;
-
-    /// Canonical PDA seeds for all receipts
+    /// Shared receipt seed prefix.
+    ///
+    /// Warning:
+    /// This is only the common seed prefix. The full PDA seed set is
+    /// instruction-family specific and must match each instruction's live
+    /// on-chain derivation exactly.
     pub const RECEIPT_SEED: &[u8] = b"receipt";
 
-    /// Canonical receipt PDA derivation
-    /// MUST be mirrored exactly in tests/helpers
-    pub fn receipt_seeds<'a>(
+    /// Historical / generalized V2-style receipt seed helper.
+    ///
+    /// This helper is useful for flows that intentionally derive receipts from:
+    /// - treasury
+    /// - user
+    /// - mint
+    /// - tx_count bytes
+    /// - direction byte
+    ///
+    /// It is NOT the universal live derivation for every current flow.
+    /// In particular, current SPL pay receipts are treasury/pay_count-based.
+    pub fn receipt_seeds_v2<'a>(
         treasury: &'a Pubkey,
         user: &'a Pubkey,
         mint: &'a Pubkey,
         tx_count: &'a [u8; 8],
         direction_seed: &'a [u8; 1],
     ) -> [&'a [u8]; 6] {
-      [
-        Receipt::RECEIPT_SEED.as_ref(),
-
-        treasury.as_ref(),
-        user.as_ref(),
-        mint.as_ref(),
-        tx_count.as_ref(),
-        direction_seed.as_ref(),
-      ]
+        [
+            Self::RECEIPT_SEED,
+            treasury.as_ref(),
+            user.as_ref(),
+            mint.as_ref(),
+            tx_count.as_ref(),
+            direction_seed.as_ref(),
+        ]
     }
 
+    /// Account data length excluding Anchor's 8-byte discriminator.
+    pub const LEN: usize =
+        32 + // user
+        1 +  // direction
+        1 +  // asset_kind
+        32 + // mint
+        8 +  // amount
+        8 +  // fee
+        8 +  // pre_balance
+        8 +  // post_balance
+        8 +  // ts
+        8 +  // tx_count
+        1 +  // bump
+        ReceiptV2Ext::LEN;
 
-
-    /// Convenience for `space = 8 + Receipt::LEN`
+    /// Full Anchor account space including discriminator.
     pub const SPACE: usize = 8 + Self::LEN;
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct ReceiptV2Ext {
-    /// Reserved flags for future (bitfield)
+    /// Reserved flags for future expansion.
     pub flags: u16,
 
-    /// Optional: keep if you want future-proof explicit SPL mint storage.
-    /// Redundant with `mint`, but harmless.
+    /// Optional explicit SPL mint mirror.
+    /// Redundant with `Receipt.mint`, but useful for forward compatibility.
     pub spl_mint: Pubkey,
 
-    /// Optional 32-byte reference (invoice/order id hash, etc.)
+    /// Optional 32-byte reference (invoice/order/external correlation id).
     /// Zeroed when absent.
     pub reference: [u8; 32],
 
-    /// Memo length (0..=64). Zero when absent.
+    /// Memo length in bytes. Zero when absent.
     pub memo_len: u8,
 
-    /// Memo bytes (UTF-8 or arbitrary). Only first memo_len bytes are meaningful.
+    /// Fixed-size memo buffer. Only the first `memo_len` bytes are meaningful.
     pub memo: [u8; 64],
 }
 
@@ -117,7 +158,14 @@ impl ReceiptV2Ext {
     pub const FLAG_HAS_REFERENCE: u16 = 1 << 0;
     pub const FLAG_HAS_MEMO: u16 = 1 << 1;
 
-    pub const LEN: usize = 2 + 32 + 32 + 1 + 64;
+    pub const MAX_MEMO_LEN: usize = 64;
+
+    pub const LEN: usize =
+        2 +  // flags
+        32 + // spl_mint
+        32 + // reference
+        1 +  // memo_len
+        64;  // memo
 
     pub fn sol() -> Self {
         Self {
@@ -139,7 +187,16 @@ impl ReceiptV2Ext {
         }
     }
 
-    pub fn spl_with_meta(mint: Pubkey, reference: Option<[u8; 32]>, memo: Option<&[u8]>) -> Self {
+    /// Build SPL receipt metadata with optional reference + memo.
+    ///
+    /// Safety:
+    /// - Memo input is defensively bounded to MAX_MEMO_LEN.
+    /// - Callers should still enforce protocol-level memo limits before this.
+    pub fn spl_with_meta(
+        mint: Pubkey,
+        reference: Option<[u8; 32]>,
+        memo: Option<&[u8]>,
+    ) -> Self {
         let mut ext = Self::spl(mint);
 
         if let Some(r) = reference {
@@ -148,9 +205,12 @@ impl ReceiptV2Ext {
         }
 
         if let Some(m) = memo {
-            ext.flags |= Self::FLAG_HAS_MEMO;
-            ext.memo_len = m.len() as u8;
-            ext.memo[..m.len()].copy_from_slice(m);
+            let used = m.len().min(Self::MAX_MEMO_LEN);
+            if used > 0 {
+                ext.flags |= Self::FLAG_HAS_MEMO;
+                ext.memo_len = used as u8;
+                ext.memo[..used].copy_from_slice(&m[..used]);
+            }
         }
 
         ext
@@ -168,6 +228,7 @@ impl Default for ReceiptV2Ext {
         }
     }
 }
+
 #[event]
 pub struct ReceiptCreated {
     pub user: Pubkey,

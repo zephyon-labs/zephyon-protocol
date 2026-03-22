@@ -19,11 +19,23 @@
 // - Else => receipt seeds use treasury.payCount BEFORE the pay
 //
 // If payCount-based receipts: concurrent PAY can collide (two workers read same payCount).
-// So we serialize PAY in that case (PAUSE windows can still run concurrently).
+// So we serialize PAY in that case.
+//
+// Consolidation notes:
+// - Uses hardened transport via sendRawTxFresh()
+// - Explicit foundation init
+// - Explicit Tokenkeg mint creation + mint owner sanity checks
+// - Explicit ATA derivation with TOKEN_PROGRAM_ID + ASSOCIATED_TOKEN_PROGRAM_ID
+// - Helper-backed payCount receipt derivation
 
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { PublicKey, Keypair } from "@solana/web3.js";
+import {
+  PublicKey,
+  Keypair,
+  Transaction,
+  TransactionInstruction,
+} from "@solana/web3.js";
 import {
   getAccount,
   getAssociatedTokenAddressSync,
@@ -35,10 +47,18 @@ import {
 } from "@solana/spl-token";
 import { expect } from "chai";
 
-import { loadProtocolAuthority, airdrop, withRetry, NONCE_PAY_BASE } from "./_helpers";
+import {
+  loadProtocolAuthority,
+  airdrop,
+  withRetry,
+  NONCE_PAY_BASE,
+  initFoundationOnce,
+  derivePayReceiptPda,
+  getTreasuryPayCount,
+  sendRawTxFresh,
+} from "./_helpers";
 
 // ---------- tiny utils ----------
-type BN = anchor.BN;
 const bn = (x: number | string | bigint) => new anchor.BN(x.toString());
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -51,26 +71,44 @@ function isPauseError(e: any): boolean {
   return s.includes("TreasuryPaused") || s.toLowerCase().includes("paused");
 }
 
-async function ensureAtaExists(provider: anchor.AnchorProvider, payer: Keypair, mint: PublicKey) {
-  const ata = getAssociatedTokenAddressSync(mint, payer.publicKey, false);
+async function ensureAtaExists(
+  provider: anchor.AnchorProvider,
+  payer: Keypair,
+  mint: PublicKey
+) {
+  const ata = getAssociatedTokenAddressSync(
+    mint,
+    payer.publicKey,
+    false,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
   const info = await provider.connection.getAccountInfo(ata);
   if (info) return ata;
 
   const ix = createAssociatedTokenAccountInstruction(
-    payer.publicKey, // payer
+    payer.publicKey,
     ata,
-    payer.publicKey, // owner
+    payer.publicKey,
     mint,
     TOKEN_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
-  const tx = new anchor.web3.Transaction().add(ix);
-  await provider.sendAndConfirm(tx, [payer], { commitment: "confirmed" });
+  const tx = new Transaction().add(ix);
+  await sendRawTxFresh({
+    provider,
+    tx,
+    signers: [payer],
+    commitment: "confirmed",
+  });
   return ata;
 }
 
-async function boundedAll<T>(items: (() => Promise<T>)[], concurrency: number): Promise<T[]> {
+async function boundedAll<T>(
+  items: (() => Promise<T>)[],
+  concurrency: number
+): Promise<T[]> {
   const results: T[] = [];
   let idx = 0;
 
@@ -82,7 +120,10 @@ async function boundedAll<T>(items: (() => Promise<T>)[], concurrency: number): 
     }
   }
 
-  const workers = Array.from({ length: Math.max(1, concurrency) }, () => worker());
+  const workers = Array.from(
+    { length: Math.max(1, concurrency) },
+    () => worker()
+  );
   await Promise.all(workers);
   return results;
 }
@@ -102,7 +143,9 @@ function accMetaFromIdl(acc: any) {
 
 function splPayHasNonceArg(program: Program<any>): boolean {
   const ixDef = getIx(program, "splPay");
-  return (ixDef.args as any[]).some((a: any) => String(a.name).toLowerCase().includes("nonce"));
+  return (ixDef.args as any[]).some((a: any) =>
+    String(a.name).toLowerCase().includes("nonce")
+  );
 }
 
 /**
@@ -116,23 +159,22 @@ async function deriveReceiptPdaAdaptive(args: {
   nonceIfUsed: anchor.BN;
 }): Promise<{ receipt: PublicKey; seedValue: anchor.BN; usesNonce: boolean }> {
   const { program, treasuryPda, nonceIfUsed } = args;
-  const programAny = program as any;
 
   const usesNonce = splPayHasNonceArg(program);
 
-  let seedValue: anchor.BN;
   if (usesNonce) {
-    seedValue = nonceIfUsed;
-  } else {
-    const treasuryAcc: any = await (program as any).account.treasury.fetch(treasuryPda);
-    seedValue = new anchor.BN(treasuryAcc.payCount);
+    const seedValue = nonceIfUsed;
+    const [receipt] = PublicKey.findProgramAddressSync(
+      [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(seedValue)],
+      program.programId
+    );
+    return { receipt, seedValue, usesNonce };
   }
 
-  const [receipt] = PublicKey.findProgramAddressSync(
-    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(seedValue)],
-    program.programId
+  const seedValue = new anchor.BN(
+    (await getTreasuryPayCount(program, treasuryPda)).toString()
   );
-
+  const [receipt] = derivePayReceiptPda(program.programId, treasuryPda, seedValue);
   return { receipt, seedValue, usesNonce };
 }
 
@@ -181,15 +223,21 @@ async function setTreasuryPausedStrict(
     return { pubkey, isSigner, isWritable };
   });
 
-  const ix = new anchor.web3.TransactionInstruction({
+  const ix = new TransactionInstruction({
     programId: program.programId,
     keys,
     data,
   });
 
-  const tx = new anchor.web3.Transaction().add(ix);
+  const tx = new Transaction().add(ix);
   const ap = program.provider as anchor.AnchorProvider;
-  await ap.sendAndConfirm(tx, [authority]);
+
+  await sendRawTxFresh({
+    provider: ap,
+    tx,
+    signers: [authority],
+    commitment: "confirmed",
+  });
 }
 
 type PayOutcome =
@@ -233,10 +281,12 @@ async function splPayStrictExplicit(args: {
     nonceIfUsed: nonce,
   });
 
-  // If receipt already exists (rerun), treat as SKIPPED (do not count it).
+  // If receipt already exists (rerun / dirty state), treat as SKIPPED.
   const ap = program.provider as anchor.AnchorProvider;
   const receiptInfo = await ap.connection.getAccountInfo(receipt);
-  if (receiptInfo) return { kind: "SKIPPED_RECEIPT_EXISTS", amount, mintTag };
+  if (receiptInfo) {
+    return { kind: "SKIPPED_RECEIPT_EXISTS", amount, mintTag };
+  }
 
   const full: Record<string, PublicKey> = {
     treasuryAuthority: authority.publicKey,
@@ -256,10 +306,13 @@ async function splPayStrictExplicit(args: {
   const argsObj: any = {};
   for (const a of ixDef.args as any[]) {
     const n = String(a.name);
-    if (n === "amount") argsObj[n] = bn(amount);
-    else if (n.toLowerCase().includes("memo")) argsObj[n] = null;
-    else if (n.toLowerCase().includes("nonce")) argsObj[n] = usesNonce ? seedValue : null;
-    else argsObj[n] = null;
+    const lower = n.toLowerCase();
+
+    if (lower === "amount") argsObj[a.name] = bn(amount);
+    else if (lower.includes("memo")) argsObj[a.name] = null;
+    else if (lower.includes("reference")) argsObj[a.name] = null;
+    else if (lower.includes("nonce")) argsObj[a.name] = usesNonce ? seedValue : null;
+    else argsObj[a.name] = null;
   }
 
   const data = program.coder.instruction.encode("splPay", argsObj);
@@ -275,20 +328,26 @@ async function splPayStrictExplicit(args: {
     return { pubkey, isSigner, isWritable };
   });
 
-  const ix = new anchor.web3.TransactionInstruction({
+  const ix = new TransactionInstruction({
     programId: program.programId,
     keys,
     data,
   });
 
-  const tx = new anchor.web3.Transaction().add(ix);
+  const tx = new Transaction().add(ix);
 
   try {
-    await ap.sendAndConfirm(tx, [authority]);
+    await sendRawTxFresh({
+      provider: ap,
+      tx,
+      signers: [authority],
+      commitment: "confirmed",
+    });
 
     if (pausedExpected) {
       throw new Error("Tier3C breach: splPay succeeded while treasury paused.");
     }
+
     return { kind: "SUCCESS", amount, mintTag };
   } catch (e: any) {
     if (pausedExpected && isPauseError(e)) {
@@ -327,8 +386,10 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
   const PAY_B = Number(process.env.TIER3C_PAY_B ?? "222");
 
   // Nonce partitioning (only matters if program is nonce-mode)
-  const NONCE_STRIDE = new anchor.BN("5000000000"); // 5b gap
-  const BASE = new anchor.BN(NONCE_PAY_BASE).add(new anchor.BN(SEED).mul(new anchor.BN(1_000_000)));
+  const NONCE_STRIDE = new anchor.BN("5000000000");
+  const BASE = new anchor.BN(NONCE_PAY_BASE).add(
+    new anchor.BN(SEED).mul(new anchor.BN(1_000_000))
+  );
 
   const NONCE_BASE_A = BASE;
   const NONCE_BASE_B = BASE.add(NONCE_STRIDE);
@@ -337,7 +398,7 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
   let recipientAtasA: PublicKey[] = [];
   let recipientAtasB: PublicKey[] = [];
 
-  // If program is payCount-mode, we must serialize PAY to prevent receipt collisions.
+  // If program is payCount-mode, serialize PAY to prevent receipt collisions.
   let usesNonceMode = false;
   const payLock = createMutex();
 
@@ -349,39 +410,98 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
     await airdrop(envProvider, protocolAuth.publicKey, 2);
     await sleep(120);
 
-    provider = new anchor.AnchorProvider(envProvider.connection, new anchor.Wallet(protocolAuth), {
-      commitment: "confirmed",
-      preflightCommitment: "confirmed",
-      skipPreflight: false,
-    });
+    provider = new anchor.AnchorProvider(
+      envProvider.connection,
+      new anchor.Wallet(protocolAuth),
+      {
+        commitment: "confirmed",
+        preflightCommitment: "confirmed",
+        skipPreflight: false,
+      }
+    );
     anchor.setProvider(provider);
 
     // Workspace program is cached; build fresh Program bound to our provider
     // @ts-ignore
     const wsProgram = anchor.workspace.Protocol as Program<any>;
     const ctorArity = (Program as any).length;
+
     if (ctorArity >= 3) {
       program = new (Program as any)(wsProgram.idl, wsProgram.programId, provider);
     } else {
       const idl = wsProgram.idl as any;
-      idl.metadata = { ...(idl.metadata ?? {}), address: wsProgram.programId.toBase58() };
+      idl.metadata = {
+        ...(idl.metadata ?? {}),
+        address: wsProgram.programId.toBase58(),
+      };
       program = new (Program as any)(idl, provider);
     }
+
+    await initFoundationOnce(provider, program);
 
     // Determine receipt mode once
     usesNonceMode = splPayHasNonceArg(program);
     console.log("Tier3C receipt mode:", usesNonceMode ? "nonce-mode" : "payCount-mode");
 
     // treasury PDA
-    [treasuryPda] = PublicKey.findProgramAddressSync([Buffer.from("treasury")], program.programId);
+    [treasuryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("treasury")],
+      program.programId
+    );
 
-    // Create two new mints, mint authority = protocolAuth
-    mintA = await createMint(provider.connection, protocolAuth, protocolAuth.publicKey, null, 6);
-    mintB = await createMint(provider.connection, protocolAuth, protocolAuth.publicKey, null, 6);
+    // Create two new mints (FORCED classic Tokenkeg)
+    mintA = await createMint(
+      provider.connection,
+      protocolAuth,
+      protocolAuth.publicKey,
+      null,
+      6,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
+    );
+    mintB = await createMint(
+      provider.connection,
+      protocolAuth,
+      protocolAuth.publicKey,
+      null,
+      6,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
+    );
+
+    const mintAInfo = await provider.connection.getAccountInfo(mintA);
+    if (!mintAInfo) throw new Error("Tier3C mintA missing right after createMint()");
+    if (!mintAInfo.owner.equals(TOKEN_PROGRAM_ID)) {
+      throw new Error(
+        `Tier3C mintA owner mismatch. mint=${mintA.toBase58()} owner=${mintAInfo.owner.toBase58()} expected=${TOKEN_PROGRAM_ID.toBase58()}`
+      );
+    }
+
+    const mintBInfo = await provider.connection.getAccountInfo(mintB);
+    if (!mintBInfo) throw new Error("Tier3C mintB missing right after createMint()");
+    if (!mintBInfo.owner.equals(TOKEN_PROGRAM_ID)) {
+      throw new Error(
+        `Tier3C mintB owner mismatch. mint=${mintB.toBase58()} owner=${mintBInfo.owner.toBase58()} expected=${TOKEN_PROGRAM_ID.toBase58()}`
+      );
+    }
 
     // Treasury ATAs for both mints (owner is off-curve PDA => allowOwnerOffCurve = true)
-    treasuryAtaA = getAssociatedTokenAddressSync(mintA, treasuryPda, true);
-    treasuryAtaB = getAssociatedTokenAddressSync(mintB, treasuryPda, true);
+    treasuryAtaA = getAssociatedTokenAddressSync(
+      mintA,
+      treasuryPda,
+      true,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    treasuryAtaB = getAssociatedTokenAddressSync(
+      mintB,
+      treasuryPda,
+      true,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
 
     // Create treasury ATAs if missing (payer = protocolAuth)
     for (const [mint, ata] of [
@@ -398,42 +518,83 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
           TOKEN_PROGRAM_ID,
           ASSOCIATED_TOKEN_PROGRAM_ID
         );
-        await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix), [protocolAuth]);
+        await sendRawTxFresh({
+          provider,
+          tx: new Transaction().add(ix),
+          signers: [protocolAuth],
+          commitment: "confirmed",
+        });
       }
     }
 
     // Fund treasury for both mints
-    await mintTo(provider.connection, protocolAuth, mintA, treasuryAtaA, protocolAuth.publicKey, 2_000_000);
-    await mintTo(provider.connection, protocolAuth, mintB, treasuryAtaB, protocolAuth.publicKey, 2_000_000);
+    await withRetry(
+      () =>
+        mintTo(
+          provider.connection,
+          protocolAuth,
+          mintA,
+          treasuryAtaA,
+          protocolAuth.publicKey,
+          2_000_000,
+          [],
+          undefined,
+          TOKEN_PROGRAM_ID
+        ),
+      { label: "tier3c-mintTo-A", retries: 10, baseDelayMs: 120 }
+    );
+
+    await withRetry(
+      () =>
+        mintTo(
+          provider.connection,
+          protocolAuth,
+          mintB,
+          treasuryAtaB,
+          protocolAuth.publicKey,
+          2_000_000,
+          [],
+          undefined,
+          TOKEN_PROGRAM_ID
+        ),
+      { label: "tier3c-mintTo-B", retries: 10, baseDelayMs: 120 }
+    );
 
     // Recipients
     recipients.length = 0;
     for (let i = 0; i < RECIPIENTS; i++) recipients.push(Keypair.generate());
 
     // Airdrop recipients (for ATA rent)
-    await Promise.all(
-      recipients.map(async (r) => {
-        const sig = await provider.connection.requestAirdrop(
-          r.publicKey,
-          0.25 * anchor.web3.LAMPORTS_PER_SOL
-        );
-        await provider.connection.confirmTransaction(sig, "confirmed");
-      })
-    );
+    await Promise.all(recipients.map((r) => airdrop(provider, r.publicKey, 0.25)));
 
     // Ensure recipient ATAs for both mints
     await Promise.all(recipients.map((r) => ensureAtaExists(provider, r, mintA)));
     await Promise.all(recipients.map((r) => ensureAtaExists(provider, r, mintB)));
 
-    recipientAtasA = recipients.map((r) => getAssociatedTokenAddressSync(mintA, r.publicKey, false));
-    recipientAtasB = recipients.map((r) => getAssociatedTokenAddressSync(mintB, r.publicKey, false));
+    recipientAtasA = recipients.map((r) =>
+      getAssociatedTokenAddressSync(
+        mintA,
+        r.publicKey,
+        false,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      )
+    );
+    recipientAtasB = recipients.map((r) =>
+      getAssociatedTokenAddressSync(
+        mintB,
+        r.publicKey,
+        false,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      )
+    );
 
     // Normalize: start unpaused
     await setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false);
   });
 
   after(async () => {
-    // Keep suite clean
     await setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false);
   });
 
@@ -441,8 +602,12 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
     const treasuryBeforeA = await getAccount(provider.connection, treasuryAtaA);
     const treasuryBeforeB = await getAccount(provider.connection, treasuryAtaB);
 
-    const recipientsBeforeA = await Promise.all(recipientAtasA.map((ata) => getAccount(provider.connection, ata)));
-    const recipientsBeforeB = await Promise.all(recipientAtasB.map((ata) => getAccount(provider.connection, ata)));
+    const recipientsBeforeA = await Promise.all(
+      recipientAtasA.map((ata) => getAccount(provider.connection, ata))
+    );
+    const recipientsBeforeB = await Promise.all(
+      recipientAtasB.map((ata) => getAccount(provider.connection, ata))
+    );
 
     let attemptsDone = 0;
     let successA = 0;
@@ -460,7 +625,10 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
     while (attemptsDone < TOTAL_ATTEMPTS) {
       // UNPAUSED WINDOW
       const unpausedN = Math.min(UNPAUSED_BLOCK, TOTAL_ATTEMPTS - attemptsDone);
-      await withRetry(() => setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false), { label: "unpause" });
+      await withRetry(
+        () => setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false),
+        { label: "unpause" }
+      );
 
       const unpausedTasks = Array.from({ length: unpausedN }, (_, k) => async () => {
         const idx = attemptsDone + k;
@@ -468,9 +636,9 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
         const r = recipients[rIndex].publicKey;
 
         const which = pickMint(idx);
-
-        // nonce is only meaningful in nonce-mode; otherwise ignored by receipt derivation.
-        const nonce = (which === "A" ? NONCE_BASE_A : NONCE_BASE_B).add(new anchor.BN(idx + 1));
+        const nonce = (which === "A" ? NONCE_BASE_A : NONCE_BASE_B).add(
+          new anchor.BN(idx + 1)
+        );
 
         const doPay = async () => {
           if (which === "A") {
@@ -506,7 +674,6 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
           }
         };
 
-        // If payCount-mode, serialize PAY to prevent receipt collisions under concurrency.
         return usesNonceMode ? doPay() : payLock(doPay);
       });
 
@@ -532,7 +699,10 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
 
       // PAUSED WINDOW
       const pausedN = Math.min(PAUSED_BLOCK, TOTAL_ATTEMPTS - attemptsDone);
-      await withRetry(() => setTreasuryPausedStrict(program, protocolAuth, treasuryPda, true), { label: "pause" });
+      await withRetry(
+        () => setTreasuryPausedStrict(program, protocolAuth, treasuryPda, true),
+        { label: "pause" }
+      );
 
       const pausedTasks = Array.from({ length: pausedN }, (_, k) => async () => {
         const idx = attemptsDone + k;
@@ -540,7 +710,9 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
         const r = recipients[rIndex].publicKey;
 
         const which = pickMint(idx);
-        const nonce = (which === "A" ? NONCE_BASE_A : NONCE_BASE_B).add(new anchor.BN(idx + 1));
+        const nonce = (which === "A" ? NONCE_BASE_A : NONCE_BASE_B).add(
+          new anchor.BN(idx + 1)
+        );
 
         const doPay = async () => {
           if (which === "A") {
@@ -576,8 +748,6 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
           }
         };
 
-        // Paused window: PAY should reject. In payCount-mode, we *still* serialize to avoid any
-        // accidental receipt creation race (and keep logs deterministic).
         return usesNonceMode ? doPay() : payLock(doPay);
       });
 
@@ -591,12 +761,12 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
       attemptsDone += pausedN;
 
       // Unpause before next loop
-      await withRetry(() => setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false), {
-        label: "unpause-post",
-      });
+      await withRetry(
+        () => setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false),
+        { label: "unpause-post" }
+      );
     }
 
-    // Require signal
     expect(successA + successB).to.be.greaterThan(0);
     expect(rejectCount).to.be.greaterThan(0);
 
@@ -604,22 +774,34 @@ describe("stress - Tier3C multi-mint isolation (STRICT)", () => {
     const treasuryAfterA = await getAccount(provider.connection, treasuryAtaA);
     const treasuryAfterB = await getAccount(provider.connection, treasuryAtaB);
 
-    const recipientsAfterA = await Promise.all(recipientAtasA.map((ata) => getAccount(provider.connection, ata)));
-    const recipientsAfterB = await Promise.all(recipientAtasB.map((ata) => getAccount(provider.connection, ata)));
+    const recipientsAfterA = await Promise.all(
+      recipientAtasA.map((ata) => getAccount(provider.connection, ata))
+    );
+    const recipientsAfterB = await Promise.all(
+      recipientAtasB.map((ata) => getAccount(provider.connection, ata))
+    );
 
     // Deltas per mint
-    const treasuryDeltaA = bn(treasuryBeforeA.amount.toString()).sub(bn(treasuryAfterA.amount.toString()));
-    const treasuryDeltaB = bn(treasuryBeforeB.amount.toString()).sub(bn(treasuryAfterB.amount.toString()));
+    const treasuryDeltaA = bn(treasuryBeforeA.amount.toString()).sub(
+      bn(treasuryAfterA.amount.toString())
+    );
+    const treasuryDeltaB = bn(treasuryBeforeB.amount.toString()).sub(
+      bn(treasuryAfterB.amount.toString())
+    );
 
     let recipientDeltaA = bn(0);
     for (let i = 0; i < recipients.length; i++) {
-      const d = bn(recipientsAfterA[i].amount.toString()).sub(bn(recipientsBeforeA[i].amount.toString()));
+      const d = bn(recipientsAfterA[i].amount.toString()).sub(
+        bn(recipientsBeforeA[i].amount.toString())
+      );
       recipientDeltaA = recipientDeltaA.add(d);
     }
 
     let recipientDeltaB = bn(0);
     for (let i = 0; i < recipients.length; i++) {
-      const d = bn(recipientsAfterB[i].amount.toString()).sub(bn(recipientsBeforeB[i].amount.toString()));
+      const d = bn(recipientsAfterB[i].amount.toString()).sub(
+        bn(recipientsBeforeB[i].amount.toString())
+      );
       recipientDeltaB = recipientDeltaB.add(d);
     }
 

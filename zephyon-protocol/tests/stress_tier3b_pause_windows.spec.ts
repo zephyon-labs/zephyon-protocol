@@ -1,6 +1,7 @@
 // tests/stress_tier3b_pause_windows.spec.ts
 //
 // Tier3B (STRICT): deterministic pause windows under fan-out pay pressure.
+//
 // Goal:
 // - when unpaused -> pays succeed
 // - when paused   -> pays reject
@@ -8,7 +9,7 @@
 //
 // STRICT discipline:
 // - We bypass Anchor .methods validateAccounts by encoding instructions manually.
-// - We also send transactions via raw-send with fresh blockhash + retries.
+// - We send transactions through a hardened raw-send helper with fresh blockhash.
 //
 // Receipt mode (canonical, post-v0.31.x):
 // - splPay receipts are PAY_COUNT-based:
@@ -17,6 +18,12 @@
 // Why PAY must be serialized (mutex):
 // - Two concurrent PAYs can read the same payCountBefore and derive SAME receipt PDA => collision.
 // - So: allow concurrency overall, but mutex the PAY critical section.
+//
+// Consolidation notes:
+// - Uses tri-state PAY results: "success" | "rejected" | "skipped"
+// - "receipt already exists" is SKIP, not SUCCESS
+// - Treasury foundation is initialized explicitly
+// - ATA provisioning uses stable SPL helper path instead of manual ATA instruction creation
 
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
@@ -29,107 +36,36 @@ import {
 import {
   getAccount,
   getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountInstruction,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   createMint,
   mintTo,
+  getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
 import { expect } from "chai";
 
-import { loadProtocolAuthority, airdrop } from "./_helpers";
+import {
+  loadProtocolAuthority,
+  airdrop,
+  withRetry,
+  initFoundationOnce,
+  derivePayReceiptPda,
+  getTreasuryPayCount,
+  sendRawTxFresh,
+  AttemptResult,
+} from "./_helpers";
 
 // ---------- hard-lock classic SPL Tokenkeg + ATA ----------
 const TOKEN_PROG = TOKEN_PROGRAM_ID;
 const ATA_PROG = ASSOCIATED_TOKEN_PROGRAM_ID;
 
 // ---------- tiny utils ----------
-type BN = anchor.BN;
 const bn = (x: number | string | bigint) => new anchor.BN(x.toString());
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function u64LE(n: anchor.BN) {
-  return n.toArrayLike(Buffer, "le", 8);
-}
 
 function isPauseError(e: any): boolean {
   const s = String(e?.message ?? e);
   return s.includes("TreasuryPaused") || s.toLowerCase().includes("paused");
-}
-
-function isRetryable(e: any): boolean {
-  const s = String(e?.message ?? e);
-  return (
-    s.includes("Blockhash not found") ||
-    s.toLowerCase().includes("blockhash not found") ||
-    s.includes("Transaction was not confirmed") ||
-    s.toLowerCase().includes("timeout") ||
-    s.toLowerCase().includes("timed out") ||
-    s.includes("Node is behind") ||
-    s.includes("429") ||
-    s.includes("AccountInUse") ||
-    s.toLowerCase().includes("already in use")
-  );
-}
-
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  label: string,
-  tries = 10,
-  baseDelayMs = 120
-): Promise<T> {
-  let lastErr: any;
-  for (let i = 1; i <= tries; i++) {
-    try {
-      return await fn();
-    } catch (e: any) {
-      lastErr = e;
-
-      // never retry logical pause gating errors
-      if (isPauseError(e)) throw e;
-      if (!isRetryable(e)) throw e;
-
-      await sleep(baseDelayMs + i * 80);
-    }
-  }
-  throw new Error(
-    `withRetry exhausted (${label}): ${String(lastErr?.message ?? lastErr)}`
-  );
-}
-
-/**
- * RAW sender that always uses a fresh blockhash.
- * Avoids long-suite flakiness (Blockhash not found).
- */
-async function sendRawFresh(
-  provider: anchor.AnchorProvider,
-  tx: Transaction,
-  signers: Keypair[],
-  label: string
-): Promise<string> {
-  return withRetry(
-    async () => {
-      const feePayer =
-        signers[0]?.publicKey ?? (provider.wallet as any).publicKey;
-      tx.feePayer = feePayer;
-
-      const bh = await provider.connection.getLatestBlockhash("confirmed");
-      tx.recentBlockhash = bh.blockhash;
-
-      tx.sign(...signers);
-
-      const sig = await provider.connection.sendRawTransaction(tx.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: "confirmed",
-      });
-
-      await provider.connection.confirmTransaction(sig, "confirmed");
-      return sig;
-    },
-    label,
-    12,
-    140
-  );
 }
 
 /**
@@ -171,9 +107,26 @@ async function boundedAll<T>(
 }
 
 // ---------- IDL helpers ----------
+function toSnakeCase(name: string): string {
+  return name.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`);
+}
+
+function toCamelCase(name: string): string {
+  return name.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
 function getIx(program: Program<any>, name: string): any {
-  const ix = (program.idl.instructions as any[]).find((i) => i.name === name);
-  if (!ix) throw new Error(`IDL instruction not found: ${name}`);
+  const candidates = new Set([name, toSnakeCase(name), toCamelCase(name)]);
+  const ix = (program.idl.instructions as any[]).find((i) =>
+    candidates.has(String(i.name))
+  );
+  if (!ix) {
+    throw new Error(
+      `IDL instruction not found: ${name}. Available: ${(program.idl.instructions as any[])
+        .map((i) => i.name)
+        .join(", ")}`
+    );
+  }
   return ix;
 }
 
@@ -184,60 +137,85 @@ function getIxAccountNames(program: Program<any>, ixName: string): string[] {
 
 // Compat: IDL fields vary across Anchor versions
 function accMetaFromIdl(acc: any) {
-  const isSigner = !!acc.isSigner;
-  const isWritable = !!acc.isMut || !!acc.isWritable || !!acc.writable || false;
+  const isSigner = !!acc.isSigner || !!acc.signer;
+  const isWritable =
+    !!acc.isMut || !!acc.isWritable || !!acc.writable || false;
   return { isSigner, isWritable };
 }
 
 function splPayHasNonceArg(program: Program<any>): boolean {
-  const ixDef = getIx(program, "splPay");
+  const ixDef = getIx(program, "spl_pay");
   return (ixDef.args as any[]).some((a: any) =>
     String(a.name).toLowerCase().includes("nonce")
   );
 }
 
-// receipts (payCount-mode): ["receipt", treasuryPda, payCountBefore(u64LE)]
-function receiptPdaPayCount(
-  programId: PublicKey,
-  treasuryPda: PublicKey,
-  payCountBefore: anchor.BN
+// ---------- ATA helpers (stable path) ----------
+async function waitForAccount(
+  conn: anchor.web3.Connection,
+  pubkey: PublicKey,
+  label: string
 ) {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("receipt"), treasuryPda.toBuffer(), u64LE(payCountBefore)],
-    programId
-  )[0];
+  await withRetry(
+    async () => {
+      const info = await conn.getAccountInfo(pubkey, "confirmed");
+      if (!info) throw new Error(`${label} not visible yet: ${pubkey.toBase58()}`);
+      return info;
+    },
+    { label, retries: 10, baseDelayMs: 150 }
+  );
 }
 
-// ---------- ATA helpers (Tokenkeg locked) ----------
 async function ensureAtaExists(
   provider: anchor.AnchorProvider,
   payer: Keypair,
-  mint: PublicKey
+  owner: PublicKey,
+  mint: PublicKey,
+  allowOwnerOffCurve = false,
+  label = "tier3b-ata"
 ) {
-  const ata = getAssociatedTokenAddressSync(
-    mint,
-    payer.publicKey,
-    false,
-    TOKEN_PROG,
-    ATA_PROG
+  const ataObj = await withRetry(
+    () =>
+      getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        payer,
+        mint,
+        owner,
+        allowOwnerOffCurve,
+        "confirmed",
+        undefined,
+        TOKEN_PROG,
+        ATA_PROG
+      ),
+    {
+      label: `${label}-create`,
+      retries: 10,
+      baseDelayMs: 200,
+      shouldRetry: (e: any) => {
+        const s = String(e?.message ?? e);
+        const n = String(e?.name ?? "");
+        return (
+          n.includes("TokenAccountNotFoundError") ||
+          s.includes("TokenAccountNotFoundError") ||
+          s.toLowerCase().includes("failed to find account") ||
+          s.toLowerCase().includes("could not find account") ||
+          s.includes("Blockhash not found") ||
+          s.includes("Transaction was not confirmed") ||
+          s.includes("Node is behind") ||
+          s.includes("429") ||
+          s.includes("Too many requests") ||
+          s.includes("AccountInUse") ||
+          s.includes("already in use") ||
+          s.includes("Timed out") ||
+          s.includes("timeout")
+        );
+      },
+    }
   );
-  const info = await provider.connection.getAccountInfo(ata);
-  if (info) return ata;
 
-  const ix = createAssociatedTokenAccountInstruction(
-    payer.publicKey, // payer
-    ata,
-    payer.publicKey, // owner
-    mint,
-    TOKEN_PROG,
-    ATA_PROG
-  );
-
-  const tx = new Transaction().add(ix);
-  await sendRawFresh(provider, tx, [payer], "ensureAtaExists");
-  return ata;
+  await waitForAccount(provider.connection, ataObj.address, `${label}-visible`);
+  return ataObj.address;
 }
-
 // ---------- RAW instruction builders (STRICT) ----------
 async function setTreasuryPausedStrict(
   program: Program<any>,
@@ -245,22 +223,26 @@ async function setTreasuryPausedStrict(
   treasuryPda: PublicKey,
   paused: boolean
 ) {
-  const ixDef = getIx(program, "setTreasuryPaused");
+  const ixDef = getIx(program, "set_treasury_paused");
 
   const full: Record<string, PublicKey> = {
-    treasuryAuthority: authority.publicKey,
+    treasury_authority: authority.publicKey,
     treasury: treasuryPda,
-    systemProgram: anchor.web3.SystemProgram.programId,
+    system_program: anchor.web3.SystemProgram.programId,
     rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+
+    // compat aliases
+    treasuryAuthority: authority.publicKey,
+    systemProgram: anchor.web3.SystemProgram.programId,
   };
 
   const data = program.coder.instruction.encode("setTreasuryPaused", { paused });
 
   const keys = (ixDef.accounts as any[]).map((acc: any) => {
-    const pubkey = full[acc.name];
+    const pubkey = full[String(acc.name)];
     if (!pubkey) {
       throw new Error(
-        `Missing account '${acc.name}' for setTreasuryPaused. Provided: ${Object.keys(
+        `Missing account '${acc.name}' for set_treasury_paused. Provided: ${Object.keys(
           full
         ).join(", ")}`
       );
@@ -269,15 +251,18 @@ async function setTreasuryPausedStrict(
     return { pubkey, isSigner, isWritable };
   });
 
-  const ix = new TransactionInstruction({
-    programId: program.programId,
-    keys,
-    data,
+  await sendRawTxFresh({
+    provider: program.provider as anchor.AnchorProvider,
+    tx: new Transaction().add(
+      new TransactionInstruction({
+        programId: program.programId,
+        keys,
+        data,
+      })
+    ),
+    signers: [authority],
+    commitment: "confirmed",
   });
-
-  const tx = new Transaction().add(ix);
-  const ap = program.provider as anchor.AnchorProvider;
-  await sendRawFresh(ap, tx, [authority], paused ? "pause" : "unpause");
 }
 
 async function splPayStrictPayCount(
@@ -288,8 +273,8 @@ async function splPayStrictPayCount(
   recipient: PublicKey,
   amount: number,
   pausedExpected: boolean
-): Promise<boolean> {
-  const ixDef = getIx(program, "splPay");
+): Promise<AttemptResult> {
+  const ixDef = getIx(program, "spl_pay");
   const ap = program.provider as anchor.AnchorProvider;
 
   const treasuryAta = getAssociatedTokenAddressSync(
@@ -307,60 +292,64 @@ async function splPayStrictPayCount(
     ATA_PROG
   );
 
-  // Fetch payCountBefore (canonical receipt index)
-  const treasuryAcc: any = await (program as any).account.treasury.fetch(
-    treasuryPda
+  const payCountBefore = new anchor.BN(
+    (await getTreasuryPayCount(program, treasuryPda)).toString()
   );
-  const payCountBefore = new anchor.BN(treasuryAcc.payCount);
 
-  const receipt = receiptPdaPayCount(
+  const [receipt] = derivePayReceiptPda(
     program.programId,
     treasuryPda,
     payCountBefore
   );
 
-  // If receipt already exists (rerun), treat as SKIP and do NOT count.
   const receiptInfo = await ap.connection.getAccountInfo(receipt);
-  if (receiptInfo) return true;
+  if (receiptInfo) return "skipped";
 
   const full: Record<string, PublicKey> = {
-    treasuryAuthority: authority.publicKey,
+    treasury_authority: authority.publicKey,
+    recipient,
     treasury: treasuryPda,
     mint,
-    treasuryAta,
-    recipient,
-    recipientAta,
+    recipient_ata: recipientAta,
+    treasury_ata: treasuryAta,
     receipt,
+    token_program: TOKEN_PROG,
+    associated_token_program: ATA_PROG,
+    system_program: anchor.web3.SystemProgram.programId,
+    rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+
+    // compat aliases
+    treasuryAuthority: authority.publicKey,
+    recipientAta,
+    treasuryAta,
     tokenProgram: TOKEN_PROG,
     associatedTokenProgram: ATA_PROG,
     systemProgram: anchor.web3.SystemProgram.programId,
-    rent: anchor.web3.SYSVAR_RENT_PUBKEY,
   };
 
-  // Build args object by IDL arg names.
-  // Current Rust: splPay(amount, memo?, reference?) — no nonce.
   const argsObj: any = {};
   for (const a of ixDef.args as any[]) {
-    const n = String(a.name).toLowerCase();
-    if (n === "amount") argsObj[a.name] = bn(amount);
-    else if (n.includes("memo")) argsObj[a.name] = null;
-    else if (n.includes("reference")) argsObj[a.name] = null;
+    const rawName = String(a.name);
+    const n = rawName.toLowerCase();
+    if (n === "amount") argsObj[rawName] = bn(amount);
+    else if (n.includes("memo")) argsObj[rawName] = null;
+    else if (n.includes("reference")) argsObj[rawName] = null;
     else if (n.includes("nonce")) {
       throw new Error(
         "IDL includes nonce arg but Tier3B is configured for payCount-mode. Fix IDL/Rust alignment."
       );
     } else {
-      argsObj[a.name] = null;
+      argsObj[rawName] = null;
     }
   }
 
   const data = program.coder.instruction.encode("splPay", argsObj);
 
   const keys = (ixDef.accounts as any[]).map((acc: any) => {
-    const pubkey = full[acc.name];
+    const pubkey = full[String(acc.name)];
     if (!pubkey) {
       throw new Error(
-        `Missing account '${acc.name}' for splPay. Provided: ${Object.keys(full).join(
+        `Missing account '${acc.name}' for spl_pay. Provided: ${Object.keys(full).join(
           ", "
         )}`
       );
@@ -369,22 +358,29 @@ async function splPayStrictPayCount(
     return { pubkey, isSigner, isWritable };
   });
 
-  const ix = new TransactionInstruction({
-    programId: program.programId,
-    keys,
-    data,
-  });
-
-  const tx = new Transaction().add(ix);
+  const tx = new Transaction().add(
+    new TransactionInstruction({
+      programId: program.programId,
+      keys,
+      data,
+    })
+  );
 
   try {
-    await sendRawFresh(ap, tx, [authority], "splPayStrictPayCount");
+    await sendRawTxFresh({
+      provider: ap,
+      tx,
+      signers: [authority],
+      commitment: "confirmed",
+    });
+
     if (pausedExpected) {
       throw new Error("Tier3B breach: splPay succeeded while treasury paused.");
     }
-    return true;
+
+    return "success";
   } catch (e: any) {
-    if (pausedExpected && isPauseError(e)) return false;
+    if (pausedExpected && isPauseError(e)) return "rejected";
     throw e;
   }
 }
@@ -428,7 +424,6 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
     );
     anchor.setProvider(provider);
 
-    // Fresh Program bound to our provider
     // @ts-ignore
     const wsProgram = anchor.workspace.Protocol as Program<any>;
     const ctorArity = (Program as any).length;
@@ -438,7 +433,10 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
       program = new (Program as any)(wsProgram.idl, wsProgram.programId, provider);
     } else {
       const idl = wsProgram.idl as any;
-      idl.metadata = { ...(idl.metadata ?? {}), address: wsProgram.programId.toBase58() };
+      idl.metadata = {
+        ...(idl.metadata ?? {}),
+        address: wsProgram.programId.toBase58(),
+      };
       program = new (Program as any)(idl, provider);
     }
 
@@ -446,6 +444,8 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
     console.log("Tier3B programId:", program.programId.toBase58());
     console.log("Tier3B provider wallet:", ap.wallet.publicKey.toBase58());
     console.log("Tier3B protocolAuth:", protocolAuth.publicKey.toBase58());
+
+    await initFoundationOnce(provider, program);
 
     [treasuryPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("treasury")],
@@ -460,19 +460,17 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
       );
     }
 
-    // Create fresh mint (FORCED classic Tokenkeg)
     mint = await createMint(
       provider.connection,
       protocolAuth,
       protocolAuth.publicKey,
       null,
       6,
-      undefined,     // keypair
-      undefined,     // confirmOptions
-      TOKEN_PROG     // <-- FORCE Tokenkeg
+      undefined,
+      undefined,
+      TOKEN_PROG
     );
 
-    // Sanity: ensure mint is actually owned by Tokenkeg (catches suite drift)
     const mintInfo = await provider.connection.getAccountInfo(mint);
     if (!mintInfo) throw new Error("Mint account missing right after createMint()");
     if (!mintInfo.owner.equals(TOKEN_PROG)) {
@@ -481,34 +479,15 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
       );
     }
 
-    // Create treasury ATA (Tokenkeg locked)
-    treasuryAtaPk = getAssociatedTokenAddressSync(
-      mint,
+    treasuryAtaPk = await ensureAtaExists(
+      provider,
+      protocolAuth,
       treasuryPda,
+      mint,
       true,
-      TOKEN_PROG,
-      ATA_PROG
+      "tier3b-treasury-ata"
     );
 
-    const treasuryAtaInfo = await provider.connection.getAccountInfo(treasuryAtaPk);
-    if (!treasuryAtaInfo) {
-      const ix = createAssociatedTokenAccountInstruction(
-        protocolAuth.publicKey,
-        treasuryAtaPk,
-        treasuryPda,
-        mint,
-        TOKEN_PROG,
-        ATA_PROG
-      );
-      await sendRawFresh(
-        provider,
-        new Transaction().add(ix),
-        [protocolAuth],
-        "tier3b-create-treasury-ata"
-      );
-    }
-
-    // Fund treasury ATA (FORCED Tokenkeg)
     await withRetry(
       () =>
         mintTo(
@@ -518,41 +497,38 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
           treasuryAtaPk,
           protocolAuth.publicKey,
           5_000_000,
-          [],          // multiSigners
-          undefined,   // confirmOptions
-          TOKEN_PROG   // <-- FORCE Tokenkeg
+          [],
+          undefined,
+          TOKEN_PROG
         ),
-      "tier3b-mintTo",
-      12,
-      160
+      { label: "tier3b-mintTo", retries: 12, baseDelayMs: 160 }
     );
 
     console.log("Tier3B resolved mint:", mint.toBase58());
     console.log("Tier3B resolved treasuryAta:", treasuryAtaPk.toBase58());
 
-    // Recipients + airdrop + ATAs
     recipients.length = 0;
     for (let i = 0; i < RECIPIENTS; i++) recipients.push(Keypair.generate());
 
-    await Promise.all(
-      recipients.map(async (r) => {
-        const sig = await provider.connection.requestAirdrop(
-          r.publicKey,
-          0.25 * anchor.web3.LAMPORTS_PER_SOL
-        );
-        await provider.connection.confirmTransaction(sig, "confirmed");
-      })
-    );
+    await Promise.all(recipients.map((r) => airdrop(provider, r.publicKey, 0.25)));
 
-    await Promise.all(recipients.map((r) => ensureAtaExists(provider, r, mint)));
+    for (let i = 0; i < recipients.length; i++) {
+      await ensureAtaExists(
+        provider,
+        protocolAuth,
+        recipients[i].publicKey,
+        mint,
+        false,
+        `tier3b-recipient-${i + 1}-ata`
+      );
+    }
 
-    // Ensure unpaused
     await setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false);
 
-    console.log("Tier3B IDL splPay accounts:", getIxAccountNames(program, "splPay"));
+    console.log("Tier3B IDL splPay accounts:", getIxAccountNames(program, "spl_pay"));
     console.log(
       "Tier3B IDL setTreasuryPaused accounts:",
-      getIxAccountNames(program, "setTreasuryPaused")
+      getIxAccountNames(program, "set_treasury_paused")
     );
   });
 
@@ -560,7 +536,7 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
     await setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false);
     const recipient = recipients[0].publicKey;
 
-    const ok = await splPayStrictPayCount(
+    const result = await splPayStrictPayCount(
       program,
       protocolAuth,
       treasuryPda,
@@ -569,7 +545,8 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
       PAY_AMOUNT,
       false
     );
-    expect(ok).to.eq(true);
+
+    expect(result).to.eq("success");
   });
 
   it("Tier3B: deterministic pause windows preserve invariants under fan-out pressure", async () => {
@@ -585,6 +562,7 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
     let attemptsDone = 0;
     let successCount = 0;
     let rejectCount = 0;
+    let skipCount = 0;
 
     let sumSuccessfulPays = bn(0);
 
@@ -596,8 +574,8 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
 
       const unpausedTasks = Array.from({ length: unpausedN }, (_, k) => async () => {
         const r = recipients[(attemptsDone + k) % recipients.length].publicKey;
-        return payLock(async () => {
-          return splPayStrictPayCount(
+        return payLock(async () =>
+          splPayStrictPayCount(
             program,
             protocolAuth,
             treasuryPda,
@@ -605,15 +583,22 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
             r,
             PAY_AMOUNT,
             false
-          );
-        });
+          )
+        );
       });
 
       const unpausedResults = await boundedAll(unpausedTasks, CONCURRENCY);
-      for (const ok of unpausedResults) {
-        if (!ok) throw new Error("Unexpected rejection during UNPAUSED window.");
-        successCount++;
-        sumSuccessfulPays = sumSuccessfulPays.add(bn(PAY_AMOUNT));
+      for (const result of unpausedResults) {
+        if (result === "rejected") {
+          throw new Error("Unexpected rejection during UNPAUSED window.");
+        }
+        if (result === "success") {
+          successCount++;
+          sumSuccessfulPays = sumSuccessfulPays.add(bn(PAY_AMOUNT));
+        }
+        if (result === "skipped") {
+          skipCount++;
+        }
       }
 
       attemptsDone += unpausedN;
@@ -624,8 +609,8 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
 
       const pausedTasks = Array.from({ length: pausedN }, (_, k) => async () => {
         const r = recipients[(attemptsDone + k) % recipients.length].publicKey;
-        return payLock(async () => {
-          return splPayStrictPayCount(
+        return payLock(async () =>
+          splPayStrictPayCount(
             program,
             protocolAuth,
             treasuryPda,
@@ -633,18 +618,26 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
             r,
             PAY_AMOUNT,
             true
-          );
-        });
+          )
+        );
       });
 
       const pausedResults = await boundedAll(pausedTasks, CONCURRENCY);
-      for (const ok of pausedResults) {
-        if (ok) throw new Error("Unexpected SUCCESS during PAUSED window (governance breach).");
-        rejectCount++;
+      for (const result of pausedResults) {
+        if (result === "success") {
+          throw new Error(
+            "Unexpected SUCCESS during PAUSED window (governance breach)."
+          );
+        }
+        if (result === "rejected") {
+          rejectCount++;
+        }
+        if (result === "skipped") {
+          skipCount++;
+        }
       }
 
       attemptsDone += pausedN;
-
       await setTreasuryPausedStrict(program, protocolAuth, treasuryPda, false);
     }
 
@@ -672,16 +665,18 @@ describe("stress - Tier3B deterministic pause windows (STRICT)", () => {
       treasuryDelta.eq(sumSuccessfulPays),
       "treasuryDelta != sumSuccessfulPays"
     ).to.eq(true);
+
     expect(
       recipientAggregateDelta.eq(sumSuccessfulPays),
       "recipientAggregateDelta != sumSuccessfulPays"
     ).to.eq(true);
 
-    console.log({
+    console.log("Tier3B Evidence:", {
       attemptsDone,
       successCount,
       rejectCount,
-      sumSuccessfulPays: sumSuccessfulPays.toString(),
+      skipCount,
+      expectedMoved: sumSuccessfulPays.toString(),
       treasuryDelta: treasuryDelta.toString(),
       recipientAggregateDelta: recipientAggregateDelta.toString(),
     });

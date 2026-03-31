@@ -8,7 +8,6 @@ import {
   LAMPORTS_PER_SOL,
   Connection,
   Transaction,
-  TransactionInstruction,
   SendOptions,
   Commitment,
 } from "@solana/web3.js";
@@ -17,12 +16,12 @@ import { expect } from "chai";
 import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
-  getOrCreateAssociatedTokenAccount,
-  createAssociatedTokenAccountInstruction,
-  createMint,
-  mintTo,
+  MINT_SIZE,
   getAccount,
   getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountInstruction,
+  createInitializeMintInstruction,
+  createMintToInstruction,
 } from "@solana/spl-token";
 
 /* ─────────────────────────────────────────────────────────
@@ -117,10 +116,6 @@ function sleep(ms: number) {
 
 /* ─────────────────────────────────────────────────────────
  * Receipt PDA derivations
- *
- * Important:
- * Receipt derivation is flow-specific.
- * Do NOT assume one schema fits every instruction family.
  * ───────────────────────────────────────────────────────── */
 
 /** Canonical receipt PDA — SPL deposit
@@ -169,9 +164,6 @@ export function derivePayReceiptPda(
 
 /** Historical / V2-style generalized receipt PDA helper.
  * seeds = ["receipt", treasury, user, mint, txCount_le_u64, direction_u8]
- *
- * Useful only for flows intentionally using that schema.
- * Do NOT assume current SPL pay uses this.
  */
 export function deriveReceiptPdaV2(args: {
   program: anchor.Program;
@@ -204,7 +196,6 @@ export function deriveReceiptPdaV2(args: {
 
 /** LEGACY receipt PDA (old schema)
  * Old seeds = ["receipt", user_profile, tx_count_le_u64]
- * Keep only for backward compatibility in older specs.
  */
 export function deriveReceiptPdaByUserProfile_LEGACY(
   programId: PublicKey,
@@ -263,7 +254,7 @@ export const pda = {
 export async function getAccountInfoOrNull(
   providerOrConn: AnchorProvider | Connection,
   address: PublicKey,
-  commitment: Commitment = "confirmed"
+  commitment: Commitment = "finalized"
 ): Promise<AccountInfo<Buffer> | null> {
   const conn =
     (providerOrConn as AnchorProvider).connection ??
@@ -282,7 +273,7 @@ export function decodeReceiptFromAccountInfo(
 export async function receiptExists(
   providerOrConn: AnchorProvider | Connection,
   address: PublicKey,
-  commitment: Commitment = "confirmed"
+  commitment: Commitment = "finalized"
 ): Promise<boolean> {
   const info = await getAccountInfoOrNull(providerOrConn, address, commitment);
   return !!info;
@@ -292,7 +283,7 @@ export async function fetchReceiptOrNull(
   providerOrConn: AnchorProvider | Connection,
   program: any,
   address: PublicKey,
-  commitment: Commitment = "confirmed"
+  commitment: Commitment = "finalized"
 ): Promise<any | null> {
   const info = await getAccountInfoOrNull(providerOrConn, address, commitment);
   if (!info) return null;
@@ -359,10 +350,10 @@ export async function getTokenBalanceOrZero(
     (providerOrConn as AnchorProvider).connection ??
     (providerOrConn as Connection);
 
-  const info = await conn.getAccountInfo(ata, "confirmed");
+  const info = await conn.getAccountInfo(ata, "finalized");
   if (!info) return 0n;
 
-  const acct = await getAccount(conn, ata);
+  const acct = await getAccount(conn, ata, "finalized", TOKEN_PROGRAM_ID);
   return BigInt(acct.amount.toString());
 }
 
@@ -469,10 +460,10 @@ export function loadProtocolAuthority(
 async function confirmSignatureWithBlockhash(
   conn: Connection,
   signature: string,
-  commitment: Commitment = "confirmed",
+  commitment: Commitment = "finalized",
   latest?: { blockhash: string; lastValidBlockHeight: number }
 ) {
-  const bh = latest ?? (await conn.getLatestBlockhash(commitment));
+  const bh = latest ?? (await conn.getLatestBlockhash("finalized"));
   await conn.confirmTransaction(
     {
       signature,
@@ -487,7 +478,7 @@ export async function airdrop(
   providerOrConn: AnchorProvider | Connection,
   pubkey: PublicKey,
   amount: number = 2,
-  commitment: Commitment = "confirmed"
+  commitment: Commitment = "finalized"
 ) {
   const conn =
     (providerOrConn as AnchorProvider).connection ??
@@ -496,7 +487,7 @@ export async function airdrop(
   const lamports =
     amount >= 1_000_000 ? amount : Math.floor(amount * LAMPORTS_PER_SOL);
 
-  const latest = await conn.getLatestBlockhash(commitment);
+  const latest = await conn.getLatestBlockhash("finalized");
   const sig = await conn.requestAirdrop(pubkey, lamports);
   await confirmSignatureWithBlockhash(conn, sig, commitment, latest);
   return sig;
@@ -517,11 +508,11 @@ export async function sendRawTxFresh(args: {
     tx,
     signers,
     feePayer,
-    commitment = "confirmed",
+    commitment = "finalized",
     opts,
   } = args;
 
-  const latest = await provider.connection.getLatestBlockhash(commitment);
+  const latest = await provider.connection.getLatestBlockhash("finalized");
 
   tx.feePayer =
     feePayer ?? signers[0]?.publicKey ?? provider.wallet.publicKey;
@@ -533,7 +524,7 @@ export async function sendRawTxFresh(args: {
     tx.serialize(),
     opts ?? {
       skipPreflight: false,
-      preflightCommitment: commitment,
+      preflightCommitment: "finalized",
     }
   );
 
@@ -564,7 +555,7 @@ export async function sendTx(
   signers: Keypair[],
   opts: SendOptions = {
     skipPreflight: false,
-    preflightCommitment: "confirmed",
+    preflightCommitment: "finalized",
   }
 ): Promise<string> {
   return await sendRawTxFresh({
@@ -572,7 +563,7 @@ export async function sendTx(
     tx,
     signers,
     opts,
-    commitment: (opts.preflightCommitment as Commitment) ?? "confirmed",
+    commitment: "finalized",
   });
 }
 
@@ -584,8 +575,7 @@ export async function sendTxExplicit(args: {
   opts?: SendOptions;
   commitment?: Commitment;
 }): Promise<string> {
-  const { provider, tx, signers, feePayer, opts, commitment = "confirmed" } =
-    args;
+  const { provider, tx, signers, feePayer, opts } = args;
 
   return await sendRawTxFresh({
     provider,
@@ -595,263 +585,9 @@ export async function sendTxExplicit(args: {
     opts:
       opts ?? {
         skipPreflight: false,
-        preflightCommitment: commitment,
+        preflightCommitment: "finalized",
       },
-    commitment,
-  });
-}
-
-/* ─────────────────────────────────────────────────────────
- * Foundation init
- * ───────────────────────────────────────────────────────── */
-export async function initFoundationOnce(
-  provider: AnchorProvider,
-  program: Program,
-  _ignored?: any
-) {
-  const [treasuryPda] = deriveTreasuryPda();
-  const protocolAuth = loadProtocolAuthority();
-
-  await airdrop(provider, protocolAuth.publicKey, 2);
-
-  try {
-    const ix = await program.methods
-      .initializeTreasury()
-      .accounts({
-        treasury: treasuryPda,
-        authority: protocolAuth.publicKey,
-        systemProgram: SystemProgram.programId,
-      })
-      .instruction();
-
-    const tx = new Transaction().add(ix);
-    await sendTx(provider, tx, [protocolAuth], {
-      skipPreflight: false,
-      preflightCommitment: "confirmed",
-    });
-  } catch (e: any) {
-    const msg = String(e?.message ?? e);
-    const likelyIdempotent =
-      msg.includes("already in use") ||
-      msg.includes("custom program error") ||
-      msg.toLowerCase().includes("account already") ||
-      msg.toLowerCase().includes("initialized");
-
-    if (!likelyIdempotent) {
-      throw e;
-    }
-  }
-
-  try {
-    await (program.account as any).treasury.fetch(treasuryPda);
-  } catch {
-    throw new Error(
-      `treasury NOT initialized. Check PROTOCOL_AUTHORITY vs tests/keys/protocol-authority.json and program ID vs target/idl/protocol.json.`
-    );
-  }
-
-  return {
-    programId: PROGRAM_ID(),
-    treasuryPda,
-    protocolAuth,
-  };
-}
-
-/* ─────────────────────────────────────────────────────────
- * SPL helpers
- * ───────────────────────────────────────────────────────── */
-export async function setupMintAndAtas(
-  provider: AnchorProvider,
-  payer: Keypair,
-  treasuryOwner: PublicKey,
-  initialUserAmount: bigint = 1_000_000n,
-  decimals = 6
-) {
-  const mint = await createMint(
-    provider.connection,
-    payer,
-    payer.publicKey,
-    null,
-    decimals
-  );
-
-  const userAta = await getOrCreateAssociatedTokenAccount(
-    provider.connection,
-    payer,
-    mint,
-    payer.publicKey
-  );
-
-  const treasuryAta = await getOrCreateAssociatedTokenAccount(
-    provider.connection,
-    payer,
-    mint,
-    treasuryOwner,
-    true
-  );
-
-  await mintTo(
-    provider.connection,
-    payer,
-    mint,
-    userAta.address,
-    payer.publicKey,
-    initialUserAmount
-  );
-
-  return { mint, userAta, treasuryAta, tokenProgram: TOKEN_PROGRAM_ID };
-}
-
-export async function setupMintAndAtasStrict(args: {
-  provider: AnchorProvider;
-  payer: Keypair;
-  treasuryOwner: PublicKey;
-  initialUserAmount?: bigint;
-  decimals?: number;
-}): Promise<{
-  mint: PublicKey;
-  userAta: PublicKey;
-  treasuryAta: PublicKey;
-  tokenProgram: PublicKey;
-  associatedTokenProgram: PublicKey;
-}> {
-  const {
-    provider,
-    payer,
-    treasuryOwner,
-    initialUserAmount = 1_000_000n,
-    decimals = 6,
-  } = args;
-
-  const mint = await createMint(
-    provider.connection,
-    payer,
-    payer.publicKey,
-    null,
-    decimals,
-    undefined,
-    undefined,
-    TOKEN_PROGRAM_ID
-  );
-
-  const mintInfo = await provider.connection.getAccountInfo(mint);
-  if (!mintInfo) {
-    throw new Error("setupMintAndAtasStrict: mint account missing after createMint()");
-  }
-  if (!mintInfo.owner.equals(TOKEN_PROGRAM_ID)) {
-    throw new Error(
-      `setupMintAndAtasStrict: mint owner mismatch. owner=${mintInfo.owner.toBase58()} expected=${TOKEN_PROGRAM_ID.toBase58()}`
-    );
-  }
-
-  const userAta = getAssociatedTokenAddressSync(
-    mint,
-    payer.publicKey,
-    false,
-    TOKEN_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
-  const treasuryAta = getAssociatedTokenAddressSync(
-    mint,
-    treasuryOwner,
-    true,
-    TOKEN_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
-
-  for (const [owner, ata, allowOwnerOffCurve] of [
-    [payer.publicKey, userAta, false],
-    [treasuryOwner, treasuryAta, true],
-  ] as const) {
-    const info = await provider.connection.getAccountInfo(ata);
-    if (!info) {
-      const ix = createAssociatedTokenAccountInstruction(
-        payer.publicKey,
-        ata,
-        owner,
-        mint,
-        TOKEN_PROGRAM_ID,
-        ASSOCIATED_TOKEN_PROGRAM_ID
-      );
-      const tx = new Transaction().add(ix);
-      await sendRawTxFresh({
-        provider,
-        tx,
-        signers: [payer],
-        commitment: "confirmed",
-      });
-    }
-  }
-
-  await mintTo(
-    provider.connection,
-    payer,
-    mint,
-    userAta,
-    payer.publicKey,
-    Number(initialUserAmount),
-    [],
-    undefined,
-    TOKEN_PROGRAM_ID
-  );
-
-  return {
-    mint,
-    userAta,
-    treasuryAta,
-    tokenProgram: TOKEN_PROGRAM_ID,
-    associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-  };
-}
-
-/* ─────────────────────────────────────────────────────────
- * Concurrency helpers
- * ───────────────────────────────────────────────────────── */
-export async function runBounded<T>(
-  concurrency: number,
-  items: T[],
-  worker: (item: T, index: number) => Promise<void>
-): Promise<void> {
-  const queue = items.map((item, index) => ({ item, index }));
-
-  const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
-    while (queue.length) {
-      const next = queue.shift();
-      if (!next) return;
-      await worker(next.item, next.index);
-    }
-  });
-
-  await Promise.all(workers);
-}
-
-export async function runBoundedJittered<T>(args: {
-  concurrency: number;
-  items: T[];
-  worker: (item: T, index: number) => Promise<void>;
-  shuffle?: boolean;
-  minDelayMs?: number;
-  maxDelayMs?: number;
-}): Promise<void> {
-  const {
-    concurrency,
-    worker,
-    shuffle = true,
-    minDelayMs = 0,
-    maxDelayMs = 25,
-  } = args;
-
-  const items = [...args.items];
-  if (shuffle) shuffleInPlace(items);
-
-  await runBounded(concurrency, items, async (item, index) => {
-    if (maxDelayMs > 0) {
-      const delay =
-        minDelayMs +
-        Math.floor(Math.random() * Math.max(1, maxDelayMs - minDelayMs + 1));
-      await sleep(delay);
-    }
-    await worker(item, index);
+    commitment: "finalized",
   });
 }
 
@@ -937,6 +673,440 @@ export async function withRetryInfo<T>(
   }
 
   throw lastErr;
+}
+
+/* ─────────────────────────────────────────────────────────
+ * Strict SPL infrastructure
+ * ───────────────────────────────────────────────────────── */
+
+async function assertAccountOwnedBy(
+  conn: Connection,
+  address: PublicKey,
+  owner: PublicKey,
+  label: string
+) {
+  const info = await conn.getAccountInfo(address, "finalized");
+  if (!info) {
+    throw new Error(`${label}: account missing: ${address.toBase58()}`);
+  }
+  if (!info.owner.equals(owner)) {
+    throw new Error(
+      `${label}: owner mismatch for ${address.toBase58()}. got=${info.owner.toBase58()} expected=${owner.toBase58()}`
+    );
+  }
+}
+
+export async function createMintStrict(args: {
+  provider: AnchorProvider;
+  payer: Keypair;
+  mintAuthority: PublicKey;
+  freezeAuthority?: PublicKey | null;
+  decimals?: number;
+}): Promise<PublicKey> {
+  const {
+    provider,
+    payer,
+    mintAuthority,
+    freezeAuthority = null,
+    decimals = 6,
+  } = args;
+
+  const mint = Keypair.generate();
+  const lamports =
+    await provider.connection.getMinimumBalanceForRentExemption(MINT_SIZE, "finalized");
+
+  const tx = new Transaction().add(
+    SystemProgram.createAccount({
+      fromPubkey: payer.publicKey,
+      newAccountPubkey: mint.publicKey,
+      space: MINT_SIZE,
+      lamports,
+      programId: TOKEN_PROGRAM_ID,
+    }),
+    createInitializeMintInstruction(
+      mint.publicKey,
+      decimals,
+      mintAuthority,
+      freezeAuthority,
+      TOKEN_PROGRAM_ID
+    )
+  );
+
+  await sendRawTxFresh({
+    provider,
+    tx,
+    signers: [payer, mint],
+    commitment: "finalized",
+  });
+
+  await withRetry(
+    async () => {
+      await assertAccountOwnedBy(
+        provider.connection,
+        mint.publicKey,
+        TOKEN_PROGRAM_ID,
+        "createMintStrict"
+      );
+    },
+    {
+      label: "createMintStrict-visible",
+      retries: 12,
+      baseDelayMs: 100,
+    }
+  );
+
+  return mint.publicKey;
+}
+
+export async function createAtaStrict(args: {
+  provider: AnchorProvider;
+  payer: Keypair;
+  mint: PublicKey;
+  owner: PublicKey;
+  allowOwnerOffCurve?: boolean;
+}): Promise<PublicKey> {
+  const {
+    provider,
+    payer,
+    mint,
+    owner,
+    allowOwnerOffCurve = false,
+  } = args;
+
+  const ata = getAssociatedTokenAddressSync(
+    mint,
+    owner,
+    allowOwnerOffCurve,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  const existing = await provider.connection.getAccountInfo(ata, "finalized");
+  if (existing) {
+    await assertAccountOwnedBy(
+      provider.connection,
+      ata,
+      TOKEN_PROGRAM_ID,
+      "createAtaStrict-existing"
+    );
+    return ata;
+  }
+
+  const tx = new Transaction().add(
+    createAssociatedTokenAccountInstruction(
+      payer.publicKey,
+      ata,
+      owner,
+      mint,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    )
+  );
+
+  await withRetry(
+    async () => {
+      try {
+        await sendRawTxFresh({
+          provider,
+          tx,
+          signers: [payer],
+          commitment: "finalized",
+        });
+      } catch (e: any) {
+        const msg = String(e?.message ?? e).toLowerCase();
+        if (msg.includes("already in use") || msg.includes("custom program error: 0x0")) {
+          const nowExists = await provider.connection.getAccountInfo(ata, "finalized");
+          if (nowExists) return;
+        }
+        throw e;
+      }
+    },
+    {
+      label: `createAtaStrict-${ata.toBase58().slice(0, 8)}`,
+      retries: 8,
+      baseDelayMs: 120,
+    }
+  );
+
+  await withRetry(
+    async () => {
+      await assertAccountOwnedBy(
+        provider.connection,
+        ata,
+        TOKEN_PROGRAM_ID,
+        "createAtaStrict-visible"
+      );
+    },
+    {
+      label: `createAtaStrict-visible-${ata.toBase58().slice(0, 8)}`,
+      retries: 12,
+      baseDelayMs: 100,
+    }
+  );
+
+  return ata;
+}
+
+export async function mintToStrict(args: {
+  provider: AnchorProvider;
+  payer: Keypair;
+  mint: PublicKey;
+  destinationAta: PublicKey;
+  mintAuthoritySigner: Keypair;
+  amount: bigint;
+}): Promise<string> {
+  const {
+    provider,
+    payer,
+    mint,
+    destinationAta,
+    mintAuthoritySigner,
+    amount,
+  } = args;
+
+  if (amount < 0n) {
+    throw new Error(`mintToStrict: amount cannot be negative (${amount.toString()})`);
+  }
+
+  if (amount > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(
+      `mintToStrict: amount ${amount.toString()} exceeds Number.MAX_SAFE_INTEGER; add bigint chunking if you need larger test mints`
+    );
+  }
+
+  const tx = new Transaction().add(
+    createMintToInstruction(
+      mint,
+      destinationAta,
+      mintAuthoritySigner.publicKey,
+      Number(amount),
+      [],
+      TOKEN_PROGRAM_ID
+    )
+  );
+
+  const sig = await sendRawTxFresh({
+    provider,
+    tx,
+    signers: [payer, mintAuthoritySigner],
+    commitment: "finalized",
+  });
+
+  return sig;
+}
+
+/* ─────────────────────────────────────────────────────────
+ * Foundation init
+ * ───────────────────────────────────────────────────────── */
+export async function initFoundationOnce(
+  provider: AnchorProvider,
+  program: Program,
+  _ignored?: any
+) {
+  const [treasuryPda] = deriveTreasuryPda();
+  const protocolAuth = loadProtocolAuthority();
+
+  await airdrop(provider, protocolAuth.publicKey, 2, "finalized");
+
+  try {
+    const ix = await program.methods
+      .initializeTreasury()
+      .accounts({
+        treasury: treasuryPda,
+        authority: protocolAuth.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .instruction();
+
+    const tx = new Transaction().add(ix);
+    await sendTx(provider, tx, [protocolAuth], {
+      skipPreflight: false,
+      preflightCommitment: "finalized",
+    });
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    const likelyIdempotent =
+      msg.includes("already in use") ||
+      msg.includes("custom program error") ||
+      msg.toLowerCase().includes("account already") ||
+      msg.toLowerCase().includes("initialized");
+
+    if (!likelyIdempotent) {
+      throw e;
+    }
+  }
+
+  try {
+    await (program.account as any).treasury.fetch(treasuryPda);
+  } catch {
+    throw new Error(
+      `treasury NOT initialized. Check PROTOCOL_AUTHORITY vs tests/keys/protocol-authority.json and program ID vs target/idl/protocol.json.`
+    );
+  }
+
+  return {
+    programId: PROGRAM_ID(),
+    treasuryPda,
+    protocolAuth,
+  };
+}
+
+/* ─────────────────────────────────────────────────────────
+ * SPL helpers
+ * ───────────────────────────────────────────────────────── */
+export async function setupMintAndAtas(
+  provider: AnchorProvider,
+  payer: Keypair,
+  treasuryOwner: PublicKey,
+  initialUserAmount: bigint = 1_000_000n,
+  decimals = 6
+) {
+  return setupMintAndAtasStrict({
+    provider,
+    payer,
+    treasuryOwner,
+    initialUserAmount,
+    decimals,
+  });
+}
+
+export async function setupMintAndAtasStrict(args: {
+  provider: AnchorProvider;
+  payer: Keypair;
+  treasuryOwner: PublicKey;
+  initialUserAmount?: bigint;
+  decimals?: number;
+}): Promise<{
+  mint: PublicKey;
+  userAta: PublicKey;
+  treasuryAta: PublicKey;
+  tokenProgram: PublicKey;
+  associatedTokenProgram: PublicKey;
+}> {
+  const {
+    provider,
+    payer,
+    treasuryOwner,
+    initialUserAmount = 1_000_000n,
+    decimals = 6,
+  } = args;
+
+  const mint = await createMintStrict({
+    provider,
+    payer,
+    mintAuthority: payer.publicKey,
+    freezeAuthority: null,
+    decimals,
+  });
+
+  const userAta = await createAtaStrict({
+    provider,
+    payer,
+    mint,
+    owner: payer.publicKey,
+    allowOwnerOffCurve: false,
+  });
+
+  const treasuryAta = await createAtaStrict({
+    provider,
+    payer,
+    mint,
+    owner: treasuryOwner,
+    allowOwnerOffCurve: true,
+  });
+
+  await withRetry(
+    async () => {
+      await mintToStrict({
+        provider,
+        payer,
+        mint,
+        destinationAta: userAta,
+        mintAuthoritySigner: payer,
+        amount: initialUserAmount,
+      });
+    },
+    {
+      label: "setupMintAndAtasStrict-mintTo",
+      retries: 10,
+      baseDelayMs: 120,
+    }
+  );
+
+  await withRetry(
+    async () => {
+      const bal = await getTokenBalanceOrZero(provider, userAta);
+      if (bal < initialUserAmount) {
+        throw new Error(
+          `setupMintAndAtasStrict: user ATA not funded yet. got=${bal.toString()} expected>=${initialUserAmount.toString()}`
+        );
+      }
+    },
+    {
+      label: "setupMintAndAtasStrict-userAta-funded",
+      retries: 12,
+      baseDelayMs: 100,
+    }
+  );
+
+  return {
+    mint,
+    userAta,
+    treasuryAta,
+    tokenProgram: TOKEN_PROGRAM_ID,
+    associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+  };
+}
+
+/* ─────────────────────────────────────────────────────────
+ * Concurrency helpers
+ * ───────────────────────────────────────────────────────── */
+export async function runBounded<T>(
+  concurrency: number,
+  items: T[],
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  const queue = items.map((item, index) => ({ item, index }));
+
+  const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
+    while (queue.length) {
+      const next = queue.shift();
+      if (!next) return;
+      await worker(next.item, next.index);
+    }
+  });
+
+  await Promise.all(workers);
+}
+
+export async function runBoundedJittered<T>(args: {
+  concurrency: number;
+  items: T[];
+  worker: (item: T, index: number) => Promise<void>;
+  shuffle?: boolean;
+  minDelayMs?: number;
+  maxDelayMs?: number;
+}): Promise<void> {
+  const {
+    concurrency,
+    worker,
+    shuffle = true,
+    minDelayMs = 0,
+    maxDelayMs = 25,
+  } = args;
+
+  const items = [...args.items];
+  if (shuffle) shuffleInPlace(items);
+
+  await runBounded(concurrency, items, async (item, index) => {
+    if (maxDelayMs > 0) {
+      const delay =
+        minDelayMs +
+        Math.floor(Math.random() * Math.max(1, maxDelayMs - minDelayMs + 1));
+      await sleep(delay);
+    }
+    await worker(item, index);
+  });
 }
 
 /* ─────────────────────────────────────────────────────────

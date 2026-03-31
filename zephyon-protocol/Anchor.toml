@@ -7,6 +7,9 @@ skip-lint = false
 [programs.localnet]
 protocol = "BtP7rVw9sqN4pW5RuzZJ2c4576R5pJU9yRtjrRJ7b5bM"
 
+[programs.devnet]
+protocol = "BtP7rVw9sqN4pW5RuzZJ2c4576R5pJU9yRtjrRJ7b5bM"
+
 [registry]
 url = "https://api.apr.dev"
 

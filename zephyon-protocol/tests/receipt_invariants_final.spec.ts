@@ -1,10 +1,16 @@
 import * as anchor from "@coral-xyz/anchor";
-import { SystemProgram, PublicKey } from "@solana/web3.js";
+import { AnchorProvider, Program } from "@coral-xyz/anchor";
+import {
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+} from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 import {
   expect,
-  getProgram,
   initFoundationOnce,
   setupMintAndAtas,
   airdrop,
@@ -14,222 +20,283 @@ import {
   getAccountInfoOrNull,
 } from "./_helpers";
 
-describe("protocol - receipt invariants final (Core15.3)", () => {
-  const provider = anchor.AnchorProvider.env();
+function bn(x: number | bigint) {
+  return new anchor.BN(x.toString());
+}
+
+function getIx(program: Program<any>, name: string): any {
+  return (program.idl.instructions as any[]).find((i) => i.name === name);
+}
+
+function accMetaFromIdl(acc: any) {
+  return {
+    isSigner: !!acc.isSigner,
+    isWritable: !!acc.isMut || !!acc.isWritable || !!acc.writable,
+  };
+}
+
+async function sendRawTx(provider: AnchorProvider, tx: Transaction, signers: Keypair[]) {
+  const latest = await provider.connection.getLatestBlockhash("finalized");
+  tx.recentBlockhash = latest.blockhash;
+  tx.feePayer = signers[0].publicKey;
+  tx.sign(...signers);
+
+  const sig = await provider.connection.sendRawTransaction(tx.serialize(), {
+    skipPreflight: false,
+    preflightCommitment: "finalized",
+  });
+
+  await provider.connection.confirmTransaction(
+    {
+      signature: sig,
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+    },
+    "finalized"
+  );
+
+  return sig;
+}
+
+function buildIx(program: Program<any>, name: string, accounts: any, args: any) {
+  const ixDef = getIx(program, name);
+
+  const data = program.coder.instruction.encode(name, args);
+
+  const keys = ixDef.accounts.map((acc: any) => {
+    const pubkey = accounts[acc.name];
+    if (!pubkey) throw new Error(`Missing account: ${acc.name}`);
+    const meta = accMetaFromIdl(acc);
+    return { pubkey, ...meta };
+  });
+
+  return new TransactionInstruction({
+    programId: program.programId,
+    keys,
+    data,
+  });
+}
+
+describe("protocol - receipt invariants final (Core15.3)", function () {
+  this.timeout(3_600_000);
+
+  const env = anchor.AnchorProvider.env();
+  const provider = new AnchorProvider(env.connection, env.wallet, {
+    commitment: "finalized",
+  });
   anchor.setProvider(provider);
 
-  const program: any = getProgram();
+  let program: Program<any>;
 
-  it("F1) deposit-with-receipt: nonce replay (same user+nonce) must fail", async () => {
-    const user = anchor.web3.Keypair.generate();
+  before(() => {
+  // @ts-ignore
+  const ws = anchor.workspace.Protocol as Program<any>;
+
+  const ctorArity = (Program as any).length;
+
+  if (ctorArity >= 3) {
+    program = new (Program as any)(ws.idl, ws.programId, provider);
+  } else {
+    const idl = ws.idl as any;
+
+    idl.metadata = {
+      ...(idl.metadata ?? {}),
+      address: ws.programId.toBase58(),
+    };
+
+    program = new (Program as any)(idl, provider);
+  }
+});
+
+  it("F1) deposit-with-receipt: nonce replay must fail", async () => {
+    const user = Keypair.generate();
     await airdrop(provider, user.publicKey, 2);
 
     const { treasuryPda } = await initFoundationOnce(provider, program);
-    const { mint, userAta, treasuryAta } = await setupMintAndAtas(
-      provider,
-      user,
-      treasuryPda,
-      1_000_000n
-    );
+    const { mint, userAta, treasuryAta } =
+      await setupMintAndAtas(provider, user, treasuryPda, 1_000_000n);
 
-    const amount = 1000;
+    const amount = 1000n;
     const nonce = 777;
 
-    const [receiptPda] = deriveDepositReceiptPda(program.programId, user.publicKey, nonce);
+    const [receiptPda] = deriveDepositReceiptPda(
+      program.programId,
+      user.publicKey,
+      nonce
+    );
 
-    // first succeeds
-    await program.methods
-      .splDepositWithReceipt(new anchor.BN(amount), new anchor.BN(nonce))
-      .accounts({
-        user: user.publicKey,
-        treasury: treasuryPda,
-        mint,
-        userAta: userAta.address,
-        treasuryAta: treasuryAta.address,
-        receipt: receiptPda,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
-      .signers([user])
-      .rpc();
+    const ix = buildIx(program, "splDepositWithReceipt", {
+      user: user.publicKey,
+      treasury: treasuryPda,
+      mint,
+      userAta,
+      treasuryAta,
+      receipt: receiptPda,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    }, {
+      amount: bn(amount),
+      nonce: bn(nonce),
+    });
 
-    // second should fail (receipt PDA already exists)
+    await sendRawTx(provider, new Transaction().add(ix), [user]);
+
     let threw = false;
     try {
-      await program.methods
-        .splDepositWithReceipt(new anchor.BN(amount), new anchor.BN(nonce))
-        .accounts({
-          user: user.publicKey,
-          treasury: treasuryPda,
-          mint,
-          userAta: userAta.address,
-          treasuryAta: treasuryAta.address,
-          receipt: receiptPda,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        } as any)
-        .signers([user])
-        .rpc();
-    } catch (_) {
+      await sendRawTx(provider, new Transaction().add(ix), [user]);
+    } catch {
       threw = true;
     }
+
     expect(threw).to.eq(true);
   });
 
-  it("F2) deposit-with-receipt: different user cannot reuse someone else's receipt PDA", async () => {
-    const userA = anchor.web3.Keypair.generate();
-    const userB = anchor.web3.Keypair.generate();
+  it("F2) deposit receipt cannot be reused by another user", async () => {
+    const userA = Keypair.generate();
+    const userB = Keypair.generate();
+
     await airdrop(provider, userA.publicKey, 2);
     await airdrop(provider, userB.publicKey, 2);
 
     const { treasuryPda } = await initFoundationOnce(provider, program);
 
-    const { mint: mintA, userAta: userAtaA, treasuryAta: treasuryAtaA } =
+    const { mint, userAta: ataA, treasuryAta } =
       await setupMintAndAtas(provider, userA, treasuryPda, 1_000_000n);
 
-    const { userAta: userAtaB } =
+    const { userAta: ataB } =
       await setupMintAndAtas(provider, userB, treasuryPda, 1_000_000n);
 
-    const amount = 500;
     const nonce = 888;
 
-    const [receiptPdaA] = deriveDepositReceiptPda(program.programId, userA.publicKey, nonce);
+    const [receiptPda] = deriveDepositReceiptPda(
+      program.programId,
+      userA.publicKey,
+      nonce
+    );
 
-    // userA creates their receipt
-    await program.methods
-      .splDepositWithReceipt(new anchor.BN(amount), new anchor.BN(nonce))
-      .accounts({
-        user: userA.publicKey,
-        treasury: treasuryPda,
-        mint: mintA,
-        userAta: userAtaA.address,
-        treasuryAta: treasuryAtaA.address,
-        receipt: receiptPdaA,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
-      .signers([userA])
-      .rpc();
-
-    // userB tries to pass userA's receipt PDA (should fail)
-    let threw = false;
-    try {
-      await program.methods
-        .splDepositWithReceipt(new anchor.BN(amount), new anchor.BN(nonce))
-        .accounts({
-          user: userB.publicKey,
-          treasury: treasuryPda,
-          mint: mintA,
-          userAta: userAtaB.address,
-          treasuryAta: treasuryAtaA.address,
-          receipt: receiptPdaA, // malicious reuse
-          tokenProgram: TOKEN_PROGRAM_ID,
-          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        } as any)
-        .signers([userB])
-        .rpc();
-    } catch (_) {
-      threw = true;
-    }
-    expect(threw).to.eq(true);
-  });
-
-  it("F3) withdraw-with-receipt: receipt must land at txCountBefore PDA, not txCountAfter", async () => {
-  const user = anchor.web3.Keypair.generate();
-  await airdrop(provider, user.publicKey, 2);
-
-  const protocolAuth = loadProtocolAuthority();
-
-  const { treasuryPda } = await initFoundationOnce(provider, program);
-  const { mint, userAta, treasuryAta } = await setupMintAndAtas(
-    provider,
-    user,
-    treasuryPda,
-    1_000_000n
-  );
-
-  // 1) Deposit first so treasury has tokens
-  // Deposit is signed by USER (not protocol auth)
-  const sig = await program.methods
-    .splDeposit(new anchor.BN(1_000_000))
-    .accounts({
-      user: user.publicKey,
+    const ixA = buildIx(program, "splDepositWithReceipt", {
+      user: userA.publicKey,
       treasury: treasuryPda,
       mint,
-      userAta: userAta.address,
-      treasuryAta: treasuryAta.address,
+      userAta: ataA,
+      treasuryAta,
+      receipt: receiptPda,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
       rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-    } as any)
-    .signers([user])
-    .rpc();
+    }, {
+      amount: bn(500),
+      nonce: bn(nonce),
+    });
 
-  await provider.connection.confirmTransaction(sig, "confirmed");
+    await sendRawTx(provider, new Transaction().add(ixA), [userA]);
 
-  // 2) user_profile PDA
-  const [userProfilePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("user_profile"), user.publicKey.toBuffer()],
-    program.programId
-  );
+    let threw = false;
 
-  // 3) txCountBefore (receipt uses PRE-INCREMENT snapshot)
-  const profileBefore: any =
-    await (program.account as any).userProfile.fetchNullable(userProfilePda);
+    try {
+      const ixB = buildIx(program, "splDepositWithReceipt", {
+        user: userB.publicKey,
+        treasury: treasuryPda,
+        mint,
+        userAta: ataB,
+        treasuryAta,
+        receipt: receiptPda,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      }, {
+        amount: bn(500),
+        nonce: bn(nonce),
+      });
 
-  const txCountBefore = profileBefore ? Number(profileBefore.txCount) : 0;
+      await sendRawTx(provider, new Transaction().add(ixB), [userB]);
+    } catch {
+      threw = true;
+    }
 
-  const [expectedReceiptPda] = deriveWithdrawReceiptPda(
-    program.programId,
-    user.publicKey,
-    txCountBefore
-  );
-  const [phantomAfterPda] = deriveWithdrawReceiptPda(
-    program.programId,
-    user.publicKey,
-    txCountBefore + 1
-  );
+    expect(threw).to.eq(true);
+  });
 
-  const withdrawAmount = 1000;
+  it("F3) withdraw receipt uses txCountBefore PDA", async () => {
+    const user = Keypair.generate();
+    await airdrop(provider, user.publicKey, 2);
 
-  // 4) Withdraw-with-receipt
-  // MUST be signed by: user + treasury_authority
-  const withdrawSig = await program.methods
-    .splWithdrawWithReceipt(new anchor.BN(withdrawAmount))
-    .accounts({
+    const protocolAuth = loadProtocolAuthority();
+
+    const { treasuryPda } = await initFoundationOnce(provider, program);
+    const { mint, userAta, treasuryAta } =
+      await setupMintAndAtas(provider, user, treasuryPda, 1_000_000n);
+
+    // deposit first
+    const depositIx = buildIx(program, "splDeposit", {
+      user: user.publicKey,
+      treasury: treasuryPda,
+      mint,
+      userAta,
+      treasuryAta,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    }, {
+      amount: bn(1_000_000),
+    });
+
+    await sendRawTx(provider, new Transaction().add(depositIx), [user]);
+
+    const [userProfilePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("user_profile"), user.publicKey.toBuffer()],
+      program.programId
+    );
+
+    const profile: any =
+      await (program.account as any).userProfile.fetchNullable(userProfilePda);
+
+    const txCountBefore = profile ? Number(profile.txCount) : 0;
+
+    const [expectedReceipt] = deriveWithdrawReceiptPda(
+      program.programId,
+      user.publicKey,
+      txCountBefore
+    );
+
+    const [phantomAfter] = deriveWithdrawReceiptPda(
+      program.programId,
+      user.publicKey,
+      txCountBefore + 1
+    );
+
+    const withdrawIx = buildIx(program, "splWithdrawWithReceipt", {
       user: user.publicKey,
       treasuryAuthority: protocolAuth.publicKey,
       userProfile: userProfilePda,
       treasury: treasuryPda,
       mint,
-      userAta: userAta.address,
-      treasuryAta: treasuryAta.address,
-      receipt: expectedReceiptPda,
+      userAta,
+      treasuryAta,
+      receipt: expectedReceipt,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
       rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-    } as any)
-    .signers([user, protocolAuth])
-    .rpc();
-    await provider.connection.confirmTransaction(withdrawSig, "confirmed");
+    }, {
+      amount: bn(1000),
+    });
 
-  // must exist at expected
-  const existsExpected = await getAccountInfoOrNull(provider, expectedReceiptPda);
-  expect(existsExpected).to.not.eq(null);
+    await sendRawTx(
+      provider,
+      new Transaction().add(withdrawIx),
+      [user, protocolAuth]
+    );
 
+    const existsExpected = await getAccountInfoOrNull(provider, expectedReceipt);
+    expect(existsExpected).to.not.eq(null);
 
-  // must NOT exist at after
-  const existsAfter = await getAccountInfoOrNull(provider, phantomAfterPda);
-  expect(existsAfter).to.eq(null);
-});
+    const existsAfter = await getAccountInfoOrNull(provider, phantomAfter);
+    expect(existsAfter).to.eq(null);
+  });
 });

@@ -4,10 +4,8 @@
     "module": "CommonJS",
     "moduleResolution": "node",
     "esModuleInterop": true,
-
     "strict": true,
     "noImplicitAny": false,
-
     "types": ["node", "mocha"],
     "skipLibCheck": true,
     "noEmit": true

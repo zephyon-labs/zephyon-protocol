@@ -1,5 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
+import BN from "bn.js";
 import { PublicKey } from "@solana/web3.js";
 import {
   createMint,
@@ -10,7 +11,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
-import idl from "../target/idl/protocol.json";
+import idl from "../target/idl/protocol.json" with { type: "json" };
 
 const PROGRAM_ID = new PublicKey(
   "BtP7rVw9sqN4pW5RuzZJ2c4576R5pJU9yRtjrRJ7b5bM"
@@ -108,7 +109,7 @@ async function main() {
 
   // B4: call Zephyon splDeposit
   const tx = await program.methods
-    .splDeposit(new anchor.BN(DEPOSIT_AMOUNT))
+    .splDeposit(new BN(DEPOSIT_AMOUNT))
     .accounts({
       user: provider.wallet.publicKey,
       treasury: TREASURY_PDA,

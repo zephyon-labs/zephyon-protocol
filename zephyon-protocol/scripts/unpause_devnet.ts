@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
-import idl from "../target/idl/protocol.json";
+import idl from "../target/idl/protocol.json" with { type: "json" };
 
 const PROGRAM_ID = new PublicKey(
   "BtP7rVw9sqN4pW5RuzZJ2c4576R5pJU9yRtjrRJ7b5bM"

@@ -1,217 +1,380 @@
-Zephyon Protocol
+# Zephyon Protocol
 
-Calm, safety-first payment and accounting infrastructure on Solana.
+Calm, receipt-backed payment infrastructure on Solana.
 
-Zephyon is a Solana-native protocol designed to provide secure treasury management, receipt-backed accounting, and explicit operational controls for on-chain payment flows. Rather than focusing on flashy UX or speculative mechanics, Zephyon prioritizes correctness, safety, and auditability at the protocol layer—so downstream applications can build user-friendly payment experiences with confidence.
+Zephyon Protocol is a Solana-native payment and accounting infrastructure layer designed to support secure treasury management, deterministic receipt generation, and operationally reliable blockchain payment flows.
 
-Zephyon is infrastructure. Products and applications (such as ZephiPay, a downstream payment application) are built on top of it.
+Rather than prioritizing speculative mechanics or complexity-heavy financial tooling, Zephyon focuses on payment clarity, safety-oriented infrastructure, and predictable operational behavior so downstream applications can build approachable consumer-facing payment experiences with confidence.
 
-Design Goals
+Zephyon serves as the infrastructure foundation beneath applications such as ZephiPay — a consumer-facing payment experience built on top of the protocol.
 
-Zephyon is built around a small set of deliberate principles:
+---
 
-Safety before incentives
-Core funds movement must be secure before introducing token economics or growth mechanics.
+# Overview
 
-Accounting before UX
-Reliable receipts and records are a prerequisite for real-world payments.
+Zephyon Protocol explores how blockchain-powered payments can become more understandable, operationally practical, and approachable for everyday users while preserving the speed and efficiency advantages of decentralized settlement infrastructure.
 
-Explicit authority boundaries
-Who can do what is enforced at the protocol level, not assumed off-chain.
+The protocol combines:
 
-Operational calm
-Protocols should fail safely and predictably under stress.
+* treasury-based SPL payment infrastructure
+* deterministic receipt systems
+* explicit governance controls
+* stress-tested accounting guarantees
+* event-oriented observability
+* frontend-integrated payment execution
 
-Composable by default
-Designed to integrate cleanly with existing Solana tooling and payment rails.
+The broader design philosophy centers around reducing uncertainty in blockchain payment experiences while maintaining strong operational correctness at the protocol layer.
 
-What Zephyon Is (and Is Not)
-Zephyon is
+---
 
-• A treasury and accounting protocol for SPL-based payment flows
-• A receipt-backed system of record for deposits and withdrawals
-• A safety-oriented foundation for payment applications
-• An infrastructure layer that downstream apps can rely on
+# Current Status
 
-Zephyon is not
+Zephyon Protocol is currently operating as a functional Solana devnet prototype with live payment execution and connected frontend infrastructure.
 
-• A wallet
-• A DEX or liquidity venue
-• A bridge
-• A speculative yield engine
-• A replacement for Solana Pay
+Current operational capabilities include:
 
-Zephyon complements existing rails rather than competing with them.
+* SPL payment execution
+* deterministic receipt generation
+* treasury PDA architecture
+* pause/unpause governance controls
+* event emission infrastructure
+* frontend-integrated payment flows
+* receipt-aware transaction confirmations
+* stress-tested accounting invariants
+* extensive Anchor test coverage
 
-Core Capabilities (Implemented)
+The protocol is actively integrated with the ZephiPay frontend prototype, which currently supports a full payment flow including:
 
-The following capabilities are implemented, tested, and hardened:
+Home
+→ Send
+→ Confirm
+→ Sending
+→ Delivered
+→ Receipt
 
-SPL Deposits
-User funds can be deposited into a protocol-controlled treasury.
+The current project state has progressed beyond conceptual architecture into a functioning blockchain-powered payment prototype environment.
 
-SPL Withdrawals
-Treasury withdrawals are permissioned and strictly authorized.
+---
 
-SPL Payments (splPay)
-Treasury-managed payments can be issued to recipients with deterministic accounting guarantees.
+# Design Principles
 
-Receipt-Backed Accounting
-Deposits, withdrawals, and payments can emit deterministic receipt accounts for auditability.
+Zephyon is built around a small set of deliberate infrastructure principles.
 
-Protocol-Level Pause Control
-Treasury-affecting operations can be paused during incidents.
+## Safety Before Incentives
 
-Side-Effect Guarding
-Paused state prevents unintended account creation or state mutation.
+Core payment infrastructure must remain reliable and secure before introducing broader economic or participation systems.
 
-Explicit Authorization Enforcement
-Unauthorized access paths are tested and rejected.
+## Accounting Before Abstraction
 
-Event Emission
-Core actions emit events suitable for indexing and observability.
+Payment confidence depends on reliable transaction visibility, deterministic receipts, and predictable accounting behavior.
 
-Security & Safety Guarantees
+## Explicit Operational Control
 
-Zephyon is designed with defensive primitives at its core.
+Sensitive treasury operations and protocol-level authority boundaries are enforced directly at the infrastructure layer.
 
-Permissioned Treasury Control
-Only authorized entities may move treasury funds.
+## Calm Infrastructure
 
-Incident Response Pause
-Deposits, withdrawals, and payments can be halted without redeployment.
+Payment systems should behave predictably, fail clearly, and remain understandable under stress conditions.
 
-Deterministic State Derivation
-PDAs are derived predictably and verified consistently.
+## Invisible Complexity
 
-Negative-Path Testing
-Unauthorized actions are explicitly tested to fail.
+Blockchain-powered payment experiences should minimize unnecessary user-facing technical complexity wherever possible.
 
-Receipt Integrity
-Receipt accounts provide tamper-resistant accounting records.
+## Composable Architecture
 
-The protocol favors clear failure modes over silent or ambiguous behavior.
+The protocol is designed to integrate cleanly with existing Solana tooling, SPL infrastructure, and downstream applications.
 
-Deterministic Stress Testing
+---
 
-Zephyon includes a multi-tier adversarial stress testing framework designed to verify accounting invariants under concurrent and chaotic conditions.
+# What Zephyon Is
 
-Stress tiers include:
+Zephyon Protocol is:
 
-Tier1 — Pause Flip Under Load
-Verifies payments correctly halt and resume when pause state changes under concurrency.
+* a treasury-oriented SPL payment infrastructure layer
+* a deterministic receipt and accounting system
+* a safety-oriented payment protocol
+* a foundation for consumer-facing payment applications
+* an operational infrastructure layer for blockchain payment usability experimentation
 
-Tier2 — Interleaved Chaos
-Simulates concurrent PAY, WITHDRAW, and PAUSE operations to ensure treasury accounting remains correct.
+---
 
-Tier3A — Multi-Recipient Storm
-Distributes payments to many recipients simultaneously to validate high-volume payout stability.
+# What Zephyon Is Not
 
-Tier3B — Deterministic Pause Windows
-Applies controlled pause windows during high fan-out payment activity.
+Zephyon Protocol is not:
 
-Tier3C — Multi-Mint Isolation
-Verifies that accounting remains isolated across multiple token mints.
+* a wallet
+* a decentralized exchange
+* a bridge
+* a speculative yield platform
+* a replacement for Solana Pay
+* a memecoin ecosystem
 
-Tier4 — Adversarial Scheduler
-A seeded stress environment simulating unpredictable execution ordering.
+The protocol complements existing Solana payment rails rather than competing directly with them.
 
-Accounting Invariant
+---
 
-Across all stress scenarios the protocol enforces the invariant:
+# Core Capabilities
 
+## SPL Deposits
+
+Users can deposit SPL assets into protocol-controlled treasury infrastructure.
+
+## SPL Withdrawals
+
+Treasury withdrawals are permissioned and explicitly authorized.
+
+## SPL Payments (`splPay`)
+
+Treasury-managed payment execution supports deterministic accounting guarantees and receipt-aware transaction flows.
+
+## Deterministic Receipt Infrastructure
+
+Payment flows can generate deterministic receipt accounts that support transaction visibility and accounting clarity.
+
+## Governance Pause Controls
+
+Treasury-affecting operations can be paused during operational incidents or abnormal conditions.
+
+## Event Emission & Observability
+
+Core protocol actions emit structured events suitable for indexing, analytics, and transaction observability systems.
+
+## Explicit Authorization Enforcement
+
+Unauthorized execution paths are tested and rejected at the protocol layer.
+
+---
+
+# ZephiPay Frontend Integration
+
+ZephiPay is the consumer-facing payment application currently integrated with Zephyon Protocol.
+
+The frontend prototype is built with:
+
+* Next.js
+* React
+* TypeScript
+* Solana devnet infrastructure
+
+The frontend currently supports live transaction execution through:
+
+Frontend UI
+→ API route
+→ Zephyon Protocol payment execution
+→ deterministic receipt generation
+→ receipt-aware confirmation display
+
+The current integration demonstrates how Solana-powered payment infrastructure can support simplified consumer-facing payment experiences while keeping blockchain complexity largely beneath the interface layer.
+
+---
+
+# Deterministic Receipt Infrastructure
+
+A central component of Zephyon Protocol is its deterministic receipt architecture.
+
+The protocol supports receipt-oriented payment flows designed to improve:
+
+* transaction visibility
+* payment reassurance
+* accounting clarity
+* human-readable confirmation states
+* downstream observability
+
+Receipt accounts are derived predictably and can be used to support auditability, transaction indexing, and receipt-aware frontend experiences.
+
+---
+
+# Security & Safety Model
+
+Zephyon Protocol prioritizes defensive operational behavior and explicit infrastructure guarantees.
+
+Current safety-oriented capabilities include:
+
+* permissioned treasury control
+* protocol pause infrastructure
+* deterministic PDA derivation
+* explicit authorization enforcement
+* side-effect guarding during paused states
+* receipt integrity validation
+* negative-path testing
+
+The protocol favors predictable and explicit failure behavior over silent or ambiguous operational outcomes.
+
+---
+
+# Stress Testing Framework
+
+Zephyon includes a multi-layer adversarial stress-testing framework designed to validate accounting correctness under concurrent and chaotic operational conditions.
+
+Current stress validation includes:
+
+## Tier1 — Pause Flip Under Load
+
+Verifies payment behavior during active pause-state transitions.
+
+## Tier2 — Interleaved Chaos
+
+Simulates concurrent payment, withdrawal, and governance operations.
+
+## Tier3A — Multi-Recipient Storm
+
+Validates large-scale recipient payout stability.
+
+## Tier3B — Deterministic Pause Windows
+
+Applies controlled pause windows during high-volume transaction activity.
+
+## Tier3C — Multi-Mint Isolation
+
+Verifies accounting isolation across multiple SPL token environments.
+
+## Tier4 — Adversarial Scheduler
+
+Simulates unpredictable execution ordering and concurrent operational stress conditions.
+
+---
+
+# Accounting Invariant
+
+Across stress scenarios, the protocol validates the invariant:
+
+```text
 treasury_delta == recipient_delta
+```
 
 Meaning:
 
 Value leaving the treasury must exactly equal value received by recipients.
 
-This invariant is verified through deterministic test harnesses executed via the Anchor test suite.
+This invariant is continuously verified through deterministic Anchor-based testing infrastructure.
 
-High-Level Architecture
+---
 
-At a high level, Zephyon consists of:
+# High-Level Architecture
 
-Protocol State PDA
-Global configuration and operational flags.
+Zephyon Protocol currently consists of:
 
-Treasury PDA
-Custody of SPL assets under protocol control.
+## Protocol State PDA
 
-Receipt PDAs
-Optional deterministic records of value movement.
+Global operational configuration and protocol state management.
 
-Authority Model
-Explicit signers governing sensitive actions.
+## Treasury PDA
 
-The architecture is intentionally minimal to reduce surface area while remaining extensible.
+Protocol-controlled SPL asset custody infrastructure.
 
-Developer Quickstart
-Requirements
+## Receipt PDAs
 
-• Rust
-• Solana CLI
-• Anchor Framework
-• Node.js
+Deterministic accounting and transaction visibility records.
 
-Build
+## Authority Model
+
+Explicit signer and governance enforcement for sensitive operations.
+
+The architecture intentionally remains operationally minimal while supporting extensibility for future payment usability experimentation.
+
+---
+
+# Devnet Deployment
+
+Zephyon Protocol is currently deployed and operating on Solana devnet infrastructure.
+
+The current deployment environment supports:
+
+* live payment execution
+* deterministic receipt generation
+* frontend-integrated transaction flows
+* event emission validation
+* protocol testing and usability experimentation
+
+The devnet environment is actively used to validate payment flow behavior, receipt infrastructure, governance controls, and frontend integration systems.
+
+---
+
+# Developer Quickstart
+
+## Requirements
+
+* Rust
+* Solana CLI
+* Anchor Framework
+* Node.js
+* Yarn or pnpm
+
+---
+
+## Build
+
+```bash
 anchor build
-Run Tests
+```
+
+## Run Tests
+
+```bash
 anchor test
+```
 
-The full test suite includes deterministic stress tiers verifying treasury accounting under adversarial conditions.
+The test suite includes deterministic stress validation and adversarial accounting verification.
 
-Devnet Deployment (Next Phase)
+---
 
-Zephyon is currently tested against local validator environments.
-The next development milestone is public devnet deployment.
+# Documentation
 
-Typical workflow:
+Additional documentation is available inside the `/docs` directory.
 
-solana config set --url devnet
-solana airdrop 2
-anchor deploy
+## Architecture
 
-Devnet deployment allows external developers and applications to interact with the protocol in a public environment before mainnet release.
+* `ARCHITECTURE.md`
+* `GOVERNANCE.md`
+* `SECURITY_MODEL.md`
 
-Composability & Integration
+## Grant Preparation
 
-Zephyon is designed to work with the Solana ecosystem rather than replace existing components.
+* `docs/grant/solana_grant_draft.md`
+* `docs/grant/milestones.md`
+* `docs/grant/budget_outline.md`
 
-• Compatible with standard SPL tokens
-• Composable with existing wallets (which retain key custody and signing)
-• Integrates cleanly with Solana Pay as a payment rail
+## Future Whitepaper & Ecosystem Materials
 
-Downstream applications such as ZephiPay focus on user experience and payment flow while relying on Zephyon for safety, accounting, and correctness.
+* `docs/whitepaper/`
 
-Future Direction (Non-Binding)
+---
 
-The following areas are intentionally deferred until after MVP stabilization and real-world validation:
+# Roadmap Direction
 
-• Governance & Multisig Controls
-• Tokenomics (ZERA)
-• Advanced UX Layers (ZephiPay)
-• Developer SDKs and tooling
-• Indexing and analytics infrastructure
+Current development priorities include:
 
-These items represent direction rather than commitments.
+* frontend usability refinement
+* receipt clarity systems
+* public prototype stabilization
+* documentation expansion
+* infrastructure hardening
+* audit-oriented preparation
+* developer accessibility improvements
 
-Project Status
+Longer-term development may support broader consumer-facing payment interaction systems built on top of the core payment usability infrastructure layer.
 
-Zephyon is currently MVP-ready.
+---
 
-• Core treasury flows implemented
-• Receipt system operational
-• Safety mechanisms tested
-• Deterministic stress suite validated
-• Architecture stable and extensible
+# Project Philosophy
 
-Development continues to prioritize correctness, clarity, and long-term sustainability.
+Zephyon Protocol is built around the belief that blockchain-powered payment systems should become more understandable, trustworthy, and operationally practical for normal users without requiring deep technical blockchain knowledge.
 
-License
+The project prioritizes:
+
+* calm infrastructure
+* explicit guarantees
+* usability-oriented payment design
+* operational clarity
+* long-term sustainability
+
+The objective is not simply to increase blockchain activity, but to help make blockchain-powered payment infrastructure feel more approachable and usable in real-world environments.
+
+---
+
+# License
 
 License information to be added.
 
-Zephyon Protocol is built for teams who value calm infrastructure, explicit guarantees, and systems that can grow without losing trust.
 
 

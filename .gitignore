@@ -19,3 +19,4 @@ Thumbs.db
 # Generated
 **/idl/*.json
 **/keys/*.json
+zephipay-frontend/

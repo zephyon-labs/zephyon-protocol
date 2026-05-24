@@ -20,3 +20,4 @@ Thumbs.db
 **/idl/*.json
 **/keys/*.json
 zephipay-frontend/
+zephipay-backend/

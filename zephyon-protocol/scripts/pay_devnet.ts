@@ -14,7 +14,10 @@ import {
   getAccount,
 } from "@solana/spl-token";
 import fs from "node:fs";
-import idl from "../target/idl/protocol.json" with { type: "json" };
+import path from "node:path";
+
+const idlPath = path.resolve(__dirname, "../target/idl/protocol.json");
+const idl = JSON.parse(fs.readFileSync(idlPath, "utf-8"));
 
 const PROGRAM_ID = new PublicKey(
   "BtP7rVw9sqN4pW5RuzZJ2c4576R5pJU9yRtjrRJ7b5bM"

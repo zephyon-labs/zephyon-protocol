@@ -12,7 +12,7 @@
   },
   "include": [
     "tests/**/*.spec.ts",
-    "tests/_helpers.ts"
+    "tests/helpers.ts"
   ],
   "exclude": [
     "node_modules",

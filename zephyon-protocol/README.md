@@ -9,6 +9,11 @@ The protocol is designed to support modern consumer-facing payment experiences t
 Zephyon serves as the infrastructure foundation beneath applications such as ZephiPay — a consumer-focused payment experience built on top of the protocol.
 
 ---
+## Whitepaper
+
+Read the full Zephyon Whitepaper here:
+
+[Zephyon Whitepaper v2](./zephyon-protocol/docs/whitepaper/Zephyon_Whitepaper_v2.pdf)
 
 # Overview
 

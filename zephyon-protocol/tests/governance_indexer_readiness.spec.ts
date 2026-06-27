@@ -62,7 +62,11 @@ describe("protocol - governance indexer readiness (Build29 Option C)", () => {
       .rpc();
 
     // Indexer-style fetch: confirmed is usually enough (faster than finalized)
-    const tx = await getTxWithRetry(provider.connection, sig, 18, 150, "confirmed");
+    const tx = await getTxWithRetry(provider.connection, sig, {
+  tries: 18,
+  delayMs: 150,
+  commitment: "confirmed",
+});
     expect(tx, "tx not found").to.not.eq(null);
 
     const logs = tx!.meta?.logMessages ?? [];

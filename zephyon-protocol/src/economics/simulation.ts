@@ -1,17 +1,5 @@
-import type { PaymentEvent, EconomicResult } from "./types";
-import { calculateProtocolFee } from "./feeEngine";
-import { allocateRevenue } from "./revenueAllocator";
-
-export function simulateEconomicEvent(event: PaymentEvent): EconomicResult {
-  const fee = calculateProtocolFee(event.amountUsd, event.protocolFeeRate);
-  const allocation = allocateRevenue(fee.protocolFeeUsd);
-
-  return {
-    event,
-    fee,
-    allocation,
-  };
-}
+import type { PaymentEvent } from "./types";
+import { processEconomicEvent } from "./engine";
 
 const demoEvent: PaymentEvent = {
   type: "P2P_PAYMENT_COMPLETED",
@@ -23,6 +11,6 @@ const demoEvent: PaymentEvent = {
   receiptId: "demo_receipt_001",
 };
 
-const result = simulateEconomicEvent(demoEvent);
+const result = processEconomicEvent(demoEvent);
 
 console.log(JSON.stringify(result, null, 2));

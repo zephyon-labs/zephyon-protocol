@@ -91,17 +91,28 @@ for (const event of demoEvents) {
   }
 }
 
-const mattTrustSignals = trustSignals.filter(
-  (signal) => signal.subjectId === "user_matt"
-);
+const participantAssessments = Array.from(
+  new Map(
+    trustSignals.map((signal) => [signal.subjectId, signal.subjectType])
+  ).entries()
+).map(([subjectId, subjectType]) => {
+  const subjectSignals = trustSignals.filter(
+    (signal) => signal.subjectId === subjectId
+  );
 
-const mattTrustEvidence = createTrustEvidence(
-  "user_matt",
-  TrustSubjectType.HUMAN,
-  mattTrustSignals
-);
+  const evidence = createTrustEvidence(
+    subjectId,
+    subjectType,
+    subjectSignals
+  );
 
-const mattTrustScore = evaluateTrust(mattTrustEvidence);
+  return {
+    subjectId,
+    subjectType,
+    evidence,
+    assessment: evaluateTrust(evidence),
+  };
+});
 
 console.log("Treasury Balances:");
 console.log(JSON.stringify(treasury, null, 2));
@@ -112,8 +123,5 @@ console.log(JSON.stringify(analytics.snapshot(), null, 2));
 console.log("Trust Signals:");
 console.log(JSON.stringify(trustSignals, null, 2));
 
-console.log("Matt Trust Evidence:");
-console.log(JSON.stringify(mattTrustEvidence, null, 2));
-
-console.log("Matt Trust Score:");
-console.log(JSON.stringify(mattTrustScore, null, 2));
+console.log("Participant Trust Assessments:");
+console.log(JSON.stringify(participantAssessments, null, 2));

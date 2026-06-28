@@ -12,6 +12,18 @@ import {
   TrustSubjectType,
 } from "../trust";
 
+const participantRegistry: Record<string, TrustSubjectType> = {
+  user_matt: TrustSubjectType.HUMAN,
+  user_alex: TrustSubjectType.HUMAN,
+  merchant_pizza_shop: TrustSubjectType.MERCHANT,
+  agent_research_bot: TrustSubjectType.AGENT,
+  agent_data_provider: TrustSubjectType.AGENT,
+};
+
+function getSubjectType(participantId: string): TrustSubjectType {
+  return participantRegistry[participantId] ?? TrustSubjectType.HUMAN;
+}
+
 const demoEvents: PaymentEvent[] = [
   {
     type: "P2P_PAYMENT_COMPLETED",
@@ -40,6 +52,15 @@ const demoEvents: PaymentEvent[] = [
     receiver: "user_matt",
     receiptId: "demo_receipt_003",
   },
+  {
+    type: "AGENT_PAYMENT_COMPLETED",
+    amountUsd: 5,
+    protocolFeeRate: 0.005,
+    timestamp: new Date().toISOString(),
+    sender: "agent_research_bot",
+    receiver: "agent_data_provider",
+    receiptId: "demo_receipt_004",
+  },
 ];
 
 let treasury = createEmptyTreasury();
@@ -56,11 +77,16 @@ for (const event of demoEvents) {
     trustSignals.push(
       createTrustSignal({
         subjectId: event.sender,
-        subjectType: TrustSubjectType.HUMAN,
-        signalType: TrustSignalType.PAYMENT_SENT,
-        confidenceWeight: 1,
+        subjectType: getSubjectType(event.sender),
+        signalType:
+          event.type === "AGENT_PAYMENT_COMPLETED"
+            ? TrustSignalType.AGENT_TASK_COMPLETED
+            : TrustSignalType.PAYMENT_SENT,
+        confidenceWeight:
+          event.type === "AGENT_PAYMENT_COMPLETED" ? 2 : 1,
         source: "economic-simulation",
         metadata: {
+          role: "sender",
           receiptId: event.receiptId,
           paymentType: event.type,
           amountUsd: event.amountUsd,
@@ -73,15 +99,19 @@ for (const event of demoEvents) {
     trustSignals.push(
       createTrustSignal({
         subjectId: event.receiver,
-        subjectType:
-          event.type === "MERCHANT_PAYMENT_COMPLETED"
-            ? TrustSubjectType.MERCHANT
-            : TrustSubjectType.HUMAN,
-        signalType: TrustSignalType.PAYMENT_RECEIVED,
+        subjectType: getSubjectType(event.receiver),
+        signalType:
+          event.type === "AGENT_PAYMENT_COMPLETED"
+            ? TrustSignalType.AGENT_TASK_COMPLETED
+            : TrustSignalType.PAYMENT_RECEIVED,
         confidenceWeight:
-          event.type === "MERCHANT_PAYMENT_COMPLETED" ? 2 : 1,
+          event.type === "MERCHANT_PAYMENT_COMPLETED" ||
+          event.type === "AGENT_PAYMENT_COMPLETED"
+            ? 2
+            : 1,
         source: "economic-simulation",
         metadata: {
+          role: "receiver",
           receiptId: event.receiptId,
           paymentType: event.type,
           amountUsd: event.amountUsd,

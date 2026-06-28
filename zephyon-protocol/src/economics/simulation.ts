@@ -5,10 +5,9 @@ import type { PaymentEvent } from "./types";
 
 import {
   createTrustEvidence,
-  createTrustSignal,
+  createTrustSignalsFromEconomicEvent,
   evaluateTrust,
   type TrustSignal,
-  TrustSignalType,
   TrustSubjectType,
 } from "../trust";
 
@@ -20,7 +19,7 @@ const participantRegistry: Record<string, TrustSubjectType> = {
   agent_data_provider: TrustSubjectType.AGENT,
 };
 
-function getSubjectType(participantId: string): TrustSubjectType {
+function resolveSubjectType(participantId: string): TrustSubjectType {
   return participantRegistry[participantId] ?? TrustSubjectType.HUMAN;
 }
 
@@ -73,52 +72,13 @@ for (const event of demoEvents) {
   treasury = applyRevenueAllocation(treasury, result.allocation);
   analytics.record(result);
 
-  if (event.sender) {
-    trustSignals.push(
-      createTrustSignal({
-        subjectId: event.sender,
-        subjectType: getSubjectType(event.sender),
-        signalType:
-          event.type === "AGENT_PAYMENT_COMPLETED"
-            ? TrustSignalType.AGENT_TASK_COMPLETED
-            : TrustSignalType.PAYMENT_SENT,
-        confidenceWeight:
-          event.type === "AGENT_PAYMENT_COMPLETED" ? 2 : 1,
-        source: "economic-simulation",
-        metadata: {
-          role: "sender",
-          receiptId: event.receiptId,
-          paymentType: event.type,
-          amountUsd: event.amountUsd,
-        },
-      })
-    );
-  }
-
-  if (event.receiver) {
-    trustSignals.push(
-      createTrustSignal({
-        subjectId: event.receiver,
-        subjectType: getSubjectType(event.receiver),
-        signalType:
-          event.type === "AGENT_PAYMENT_COMPLETED"
-            ? TrustSignalType.AGENT_TASK_COMPLETED
-            : TrustSignalType.PAYMENT_RECEIVED,
-        confidenceWeight:
-          event.type === "MERCHANT_PAYMENT_COMPLETED" ||
-          event.type === "AGENT_PAYMENT_COMPLETED"
-            ? 2
-            : 1,
-        source: "economic-simulation",
-        metadata: {
-          role: "receiver",
-          receiptId: event.receiptId,
-          paymentType: event.type,
-          amountUsd: event.amountUsd,
-        },
-      })
-    );
-  }
+  trustSignals.push(
+    ...createTrustSignalsFromEconomicEvent({
+      event,
+      resolveSubjectType,
+      source: "economic-simulation",
+    })
+  );
 }
 
 const participantAssessments = Array.from(

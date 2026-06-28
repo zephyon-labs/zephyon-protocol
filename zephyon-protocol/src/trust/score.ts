@@ -11,12 +11,14 @@ export enum TrustMaturityLevel {
   VETERAN = "veteran",
 }
 
-export interface TrustScore {
+export interface TrustAssessment {
   score: number;
   riskLevel: TrustRiskLevel;
   maturityLevel: TrustMaturityLevel;
   confidence: number;
   signalCount: number;
+  explanation: string[];
+  recommendations: string[];
   algorithmVersion: string;
   calculatedAt: string;
 }

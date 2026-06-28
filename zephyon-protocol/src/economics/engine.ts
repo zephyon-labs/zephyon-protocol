@@ -1,13 +1,34 @@
-import type { PaymentEvent, EconomicResult } from "./types";
 import { calculateProtocolFee } from "./feeEngine";
+import { applyEconomicPolicy } from "./policy";
 import { allocateRevenue } from "./revenueAllocator";
 
-export function processEconomicEvent(event: PaymentEvent): EconomicResult {
-  const fee = calculateProtocolFee(event.amountUsd, event.protocolFeeRate);
-  const allocation = allocateRevenue(fee.protocolFeeUsd);
+import type {
+  EconomicResult,
+  PaymentEvent,
+} from "./types";
+
+export function processEconomicEvent(
+  event: PaymentEvent
+): EconomicResult {
+  const policy = applyEconomicPolicy({
+    eventType: event.type,
+    baseProtocolFeeRate: event.protocolFeeRate,
+  });
+
+  const fee = calculateProtocolFee(
+    event.amountUsd,
+    policy.effectiveProtocolFeeRate
+  );
+
+  const allocation = allocateRevenue(
+    fee.protocolFeeUsd
+  );
 
   return {
-    event,
+    event: {
+      ...event,
+      protocolFeeRate: policy.effectiveProtocolFeeRate,
+    },
     fee,
     allocation,
   };

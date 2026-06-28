@@ -4,6 +4,7 @@ import {
   TrustMaturityLevel,
   TrustRiskLevel,
 } from "./score";
+import { TrustSubjectType } from "./types";
 
 const TRUST_ALGORITHM_VERSION = "1.0.0";
 
@@ -45,6 +46,7 @@ function buildExplanation(
 ): string[] {
   const explanation = [
     `${evidence.signalCount} trust signal(s) observed.`,
+    `Participant type is ${evidence.subjectType}.`,
     `Participant maturity level is ${maturityLevel}.`,
   ];
 
@@ -52,27 +54,74 @@ function buildExplanation(
     explanation.push("Participant has limited history.");
   }
 
-  explanation.push("No fraud or dispute signals are currently included in this assessment.");
+  explanation.push(
+    "No fraud or dispute signals are currently included in this assessment."
+  );
 
   return explanation;
 }
 
 function buildRecommendations(
+  subjectType: TrustSubjectType,
   maturityLevel: TrustMaturityLevel
 ): string[] {
-  if (maturityLevel === TrustMaturityLevel.NEW) {
-    return [
-      "Continue building successful payment history.",
-      "Complete verification when available.",
-      "Avoid unresolved disputes.",
-      "Maintain consistent account activity.",
-    ];
-  }
+  switch (subjectType) {
+    case TrustSubjectType.MERCHANT:
+      return [
+        "Complete merchant verification.",
+        "Maintain consistent settlement history.",
+        "Respond promptly to disputes.",
+        "Build long-term customer trust.",
+      ];
 
-  return [
-    "Maintain consistent positive activity.",
-    "Keep verification status current.",
-  ];
+    case TrustSubjectType.BUSINESS:
+      return [
+        "Complete business verification.",
+        "Maintain healthy payment volume.",
+        "Establish operational history.",
+        "Maintain compliance records.",
+      ];
+
+    case TrustSubjectType.DEVELOPER:
+      return [
+        "Continue protocol contributions.",
+        "Publish verified releases.",
+        "Maintain code quality.",
+        "Build community reputation.",
+      ];
+
+    case TrustSubjectType.AGENT:
+      return [
+        "Complete successful delegated tasks.",
+        "Maintain reliable execution history.",
+        "Avoid failed transactions.",
+        "Build consistent performance metrics.",
+      ];
+
+    case TrustSubjectType.PROTOCOL:
+      return [
+        "Maintain transparent protocol operations.",
+        "Publish reliable economic metrics.",
+        "Preserve settlement integrity.",
+        "Maintain strong uptime and observability.",
+      ];
+
+    case TrustSubjectType.HUMAN:
+    default:
+      if (maturityLevel === TrustMaturityLevel.NEW) {
+        return [
+          "Continue building successful payment history.",
+          "Complete identity verification when available.",
+          "Avoid unresolved disputes.",
+          "Maintain consistent account activity.",
+        ];
+      }
+
+      return [
+        "Maintain consistent positive activity.",
+        "Keep verification status current.",
+      ];
+  }
 }
 
 export function evaluateTrust(evidence: TrustEvidence): TrustAssessment {
@@ -86,7 +135,7 @@ export function evaluateTrust(evidence: TrustEvidence): TrustAssessment {
     confidence: calculateConfidence(evidence.signalCount),
     signalCount: evidence.signalCount,
     explanation: buildExplanation(evidence, maturityLevel),
-    recommendations: buildRecommendations(maturityLevel),
+    recommendations: buildRecommendations(evidence.subjectType, maturityLevel),
     algorithmVersion: TRUST_ALGORITHM_VERSION,
     calculatedAt: new Date().toISOString(),
   };

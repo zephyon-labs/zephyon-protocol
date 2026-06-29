@@ -11,6 +11,24 @@ export class ParticipantRegistry {
     return this.participants.get(id);
   }
 
+  getByEmail(email: string): Participant | undefined {
+    return this.list().find(
+      (participant) => participant.contactInfo.email === email
+    );
+  }
+
+  getByPhone(phone: string): Participant | undefined {
+    return this.list().find(
+      (participant) => participant.contactInfo.phone === phone
+    );
+  }
+
+  getByWalletAddress(address: string): Participant | undefined {
+    return this.list().find((participant) =>
+      participant.wallets.some((wallet) => wallet.address === address)
+    );
+  }
+
   exists(id: string): boolean {
     return this.participants.has(id);
   }

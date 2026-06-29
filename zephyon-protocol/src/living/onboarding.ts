@@ -1,8 +1,6 @@
+import { randomUUID } from "crypto";
 import { createParticipant, activateParticipant } from "./participant";
-import {
-  OnboardingRequest,
-  OnboardingResult,
-} from "./types";
+import { OnboardingRequest, OnboardingResult } from "./types";
 import { ParticipantRegistry } from "./registry";
 
 export function onboardParticipant(
@@ -11,9 +9,9 @@ export function onboardParticipant(
 ): OnboardingResult {
   const participant = activateParticipant(
     createParticipant({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       displayName: request.displayName,
-      subjectType: request.subjectType,
+      type: request.participantType,
       email: request.email,
       phone: request.phone,
     })
@@ -23,6 +21,6 @@ export function onboardParticipant(
 
   return {
     participant,
-    message: "Welcome to ZephiPay.",
+    message: "Participant onboarded successfully.",
   };
 }

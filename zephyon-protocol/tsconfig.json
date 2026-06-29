@@ -11,6 +11,7 @@
     "noEmit": true
   },
   "include": [
+    "src/**/*.ts",
     "tests/**/*.spec.ts",
     "tests/helpers.ts"
   ],
@@ -22,4 +23,3 @@
     "tests_legacy"
   ]
 }
-

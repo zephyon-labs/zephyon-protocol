@@ -1,4 +1,4 @@
-import { Participant } from "./types";
+import { Participant, ParticipantType } from "./types";
 
 import type { PaymentEvent, EconomicResult } from "../economics/types";
 import { processEconomicEvent } from "../economics/engine";
@@ -30,18 +30,43 @@ export type ParticipantPaymentResult = {
   trustResults: ParticipantTrustResult[];
 };
 
+function mapParticipantTypeToTrustSubjectType(
+  participantType: ParticipantType
+): TrustSubjectType {
+  switch (participantType) {
+    case ParticipantType.AI_AGENT:
+      return TrustSubjectType.AGENT;
+
+    case ParticipantType.MERCHANT:
+    case ParticipantType.BUSINESS:
+      return TrustSubjectType.MERCHANT;
+
+    case ParticipantType.HUMAN:
+    default:
+      return TrustSubjectType.HUMAN;
+  }
+}
+
 function determinePaymentEventType(
   sender: Participant,
   receiver: Participant
 ): PaymentEvent["type"] {
+  const senderTrustType = mapParticipantTypeToTrustSubjectType(
+    sender.participantType
+  );
+
+  const receiverTrustType = mapParticipantTypeToTrustSubjectType(
+    receiver.participantType
+  );
+
   if (
-    sender.subjectType === TrustSubjectType.AGENT ||
-    receiver.subjectType === TrustSubjectType.AGENT
+    senderTrustType === TrustSubjectType.AGENT ||
+    receiverTrustType === TrustSubjectType.AGENT
   ) {
     return "AGENT_PAYMENT_COMPLETED";
   }
 
-  if (receiver.subjectType === TrustSubjectType.MERCHANT) {
+  if (receiverTrustType === TrustSubjectType.MERCHANT) {
     return "MERCHANT_PAYMENT_COMPLETED";
   }
 
@@ -66,11 +91,15 @@ export function processParticipantPayment(
     event,
     resolveSubjectType: (participantId) => {
       if (participantId === request.sender.id) {
-        return request.sender.subjectType;
+        return mapParticipantTypeToTrustSubjectType(
+          request.sender.participantType
+        );
       }
 
       if (participantId === request.receiver.id) {
-        return request.receiver.subjectType;
+        return mapParticipantTypeToTrustSubjectType(
+          request.receiver.participantType
+        );
       }
 
       return TrustSubjectType.HUMAN;
@@ -84,9 +113,13 @@ export function processParticipantPayment(
         (signal) => signal.subjectId === participant.id
       );
 
+      const trustSubjectType = mapParticipantTypeToTrustSubjectType(
+        participant.participantType
+      );
+
       const evidence = createTrustEvidence(
         participant.id,
-        participant.subjectType,
+        trustSubjectType,
         participantSignals
       );
 

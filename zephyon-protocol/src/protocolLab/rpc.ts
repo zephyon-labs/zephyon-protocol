@@ -1,4 +1,6 @@
-export type RpcEnvironment = "devnet" | "testnet" | "mainnet-beta" | "custom";
+import type { SolanaCluster } from "../shared";
+
+export type RpcEnvironment = SolanaCluster | "custom";
 
 export type RpcEndpointConfig = {
   environment: RpcEnvironment;
@@ -6,7 +8,7 @@ export type RpcEndpointConfig = {
   label: string;
 };
 
-export const defaultRpcEndpoints: RpcEndpointConfig[] = [
+export const rpcEndpoints: RpcEndpointConfig[] = [
   {
     environment: "devnet",
     url: "https://api.devnet.solana.com",
@@ -23,3 +25,5 @@ export const defaultRpcEndpoints: RpcEndpointConfig[] = [
     label: "Solana Mainnet Public RPC",
   },
 ];
+
+export const defaultRpcEndpoints = rpcEndpoints;

@@ -12,6 +12,7 @@
   },
   "include": [
     "src/**/*.ts",
+    "scripts/protocol_lab.ts",
     "tests/**/*.spec.ts",
     "tests/helpers.ts"
   ],

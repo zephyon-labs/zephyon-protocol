@@ -1,6 +1,6 @@
-import { defaultRpcEndpoints } from "./rpc";
+import { rpcEndpoints } from "./rpc";
 import { checkRpcHealth, RpcHealthResult } from "./health";
 
-export async function runRpcCompatibilityCheck(): Promise<RpcHealthResult[]> {
-  return Promise.all(defaultRpcEndpoints.map(checkRpcHealth));
+export async function runRpcDiagnostics(): Promise<RpcHealthResult[]> {
+  return Promise.all(rpcEndpoints.map(checkRpcHealth));
 }

@@ -7,3 +7,7 @@ export * from "./program";
 export * from "./config";
 export * from "./treasury";
 export * from "./validator";
+export * from "./simulation";
+export * from "./simulationRunner";
+export * from "./paymentInstructionBuilder";
+export * from "./paymentSimulator";

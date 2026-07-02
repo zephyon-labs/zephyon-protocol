@@ -11,3 +11,6 @@ export * from "./simulation";
 export * from "./simulationRunner";
 export * from "./paymentInstructionBuilder";
 export * from "./paymentSimulator";
+export * from "./batchPaymentSimulator";
+export * from "./scenarioSimulator";
+export * from "./scenarioParticipants";

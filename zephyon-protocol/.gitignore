@@ -46,3 +46,5 @@ zephyon-protocol_SDK_OLD/
 .vscode/
 .idea/
 
+# Protocol Lab devnet participants
+.devnet-participants/

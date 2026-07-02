@@ -11,11 +11,15 @@
     "noEmit": true
   },
   "include": [
-    "src/**/*.ts",
-    "scripts/protocol_lab.ts",
-    "tests/**/*.spec.ts",
-    "tests/helpers.ts"
-  ],
+  "src/**/*.ts",
+  "scripts/protocol_lab.ts",
+  "scripts/simulate_payment.ts",
+  "scripts/simulate_payment_batch.ts",
+  "scripts/test_scenario_participants.ts",
+  "tests/**/*.spec.ts",
+  "tests/helpers.ts"
+
+],
   "exclude": [
     "node_modules",
     "target",

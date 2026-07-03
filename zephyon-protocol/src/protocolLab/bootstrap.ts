@@ -3,6 +3,7 @@ import { DEFAULT_ENVIRONMENT } from "./config";
 import { runRpcDiagnostics } from "./diagnostics";
 import { validateProtocolEnvironment } from "./validator";
 import { scenarioParticipants } from "./scenarioParticipants";
+import { createEconomicLedger, type EconomicLedger } from "./economicLedger";
 
 export type ProtocolLabBootstrap = {
   environment: typeof DEFAULT_ENVIRONMENT;
@@ -10,6 +11,7 @@ export type ProtocolLabBootstrap = {
   diagnostics: Awaited<ReturnType<typeof runRpcDiagnostics>>;
   validation: Awaited<ReturnType<typeof validateProtocolEnvironment>>;
   participants: typeof scenarioParticipants;
+  ledger: EconomicLedger;
 };
 
 export async function bootstrapProtocolLab(): Promise<ProtocolLabBootstrap> {
@@ -25,6 +27,7 @@ export async function bootstrapProtocolLab(): Promise<ProtocolLabBootstrap> {
 
   const diagnostics = await runRpcDiagnostics();
   const validation = await validateProtocolEnvironment(environment);
+  const ledger = createEconomicLedger(environment.name);
 
   console.log("");
   console.log("Bootstrap complete.");
@@ -37,5 +40,6 @@ export async function bootstrapProtocolLab(): Promise<ProtocolLabBootstrap> {
     diagnostics,
     validation,
     participants: scenarioParticipants,
+    ledger,
   };
 }

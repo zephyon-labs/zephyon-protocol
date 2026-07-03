@@ -47,4 +47,6 @@ zephyon-protocol_SDK_OLD/
 .idea/
 
 # Protocol Lab devnet participants
-.devnet-participants/protocol-lab-ledgers/
+# Protocol Lab generated artifacts
+.devnet-participants/
+protocol-lab-ledgers/

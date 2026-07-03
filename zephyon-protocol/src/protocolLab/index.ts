@@ -14,3 +14,4 @@ export * from "./paymentSimulator";
 export * from "./batchPaymentSimulator";
 export * from "./scenarioSimulator";
 export * from "./scenarioParticipants";
+export * from "./bootstrap";

@@ -1,37 +1,46 @@
 import {
-  DEFAULT_ENVIRONMENT,
-  getScenarioParticipant,
+  bootstrapProtocolLab,
   simulateScenario,
   type PaymentScenario,
-} from "../src/protocolLab";
+}  from "../src/protocolLab";
 
 const MINT = "2w2nqMemQzjwKMk3jEmtXnBqGBXGJLs8FNfb5Khb8E7J";
 
-const bob = getScenarioParticipant("bob");
-const luna = getScenarioParticipant("luna");
-const pixelPizza = getScenarioParticipant("pixel-pizza");
-const atlasAi = getScenarioParticipant("atlas-ai");
-
-const scenario: PaymentScenario = {
-  name: "Mini Economy Relationship Graph",
-  description: "Mixed-value payment simulation across multiple economic actors.",
-  delayMs: 2000,
-  requests: [
-    { mint: MINT, recipient: bob.wallet, amountRaw: 1 },
-    { mint: MINT, recipient: luna.wallet, amountRaw: 5 },
-    { mint: MINT, recipient: pixelPizza.wallet, amountRaw: 10 },
-    { mint: MINT, recipient: atlasAi.wallet, amountRaw: 25 },
-    { mint: MINT, recipient: bob.wallet, amountRaw: 50 },
-    { mint: MINT, recipient: luna.wallet, amountRaw: 100 },
-    { mint: MINT, recipient: pixelPizza.wallet, amountRaw: 250 },
-    { mint: MINT, recipient: atlasAi.wallet, amountRaw: 500 },
-    { mint: MINT, recipient: luna.wallet, amountRaw: 1000 },
-    { mint: MINT, recipient: pixelPizza.wallet, amountRaw: 2500 },
-  ],
-};
-
 async function main() {
-  const simulation = await simulateScenario(DEFAULT_ENVIRONMENT, scenario);
+  const lab = await bootstrapProtocolLab();
+
+  const bob = lab.participants.find((participant) => participant.id === "bob");
+  const luna = lab.participants.find((participant) => participant.id === "luna");
+  const pixelPizza = lab.participants.find(
+    (participant) => participant.id === "pixel-pizza"
+  );
+  const atlasAi = lab.participants.find(
+    (participant) => participant.id === "atlas-ai"
+  );
+
+  if (!bob || !luna || !pixelPizza || !atlasAi) {
+    throw new Error("Missing one or more required scenario participants.");
+  }
+
+  const scenario: PaymentScenario = {
+    name: "Mini Economy Relationship Graph",
+    description: "Mixed-value payment simulation across multiple economic actors.",
+    delayMs: 2000,
+    requests: [
+      { mint: MINT, recipient: bob.wallet, amountRaw: 1 },
+      { mint: MINT, recipient: luna.wallet, amountRaw: 5 },
+      { mint: MINT, recipient: pixelPizza.wallet, amountRaw: 10 },
+      { mint: MINT, recipient: atlasAi.wallet, amountRaw: 25 },
+      { mint: MINT, recipient: bob.wallet, amountRaw: 50 },
+      { mint: MINT, recipient: luna.wallet, amountRaw: 100 },
+      { mint: MINT, recipient: pixelPizza.wallet, amountRaw: 250 },
+      { mint: MINT, recipient: atlasAi.wallet, amountRaw: 500 },
+      { mint: MINT, recipient: luna.wallet, amountRaw: 1000 },
+      { mint: MINT, recipient: pixelPizza.wallet, amountRaw: 2500 },
+    ],
+  };
+
+  const simulation = await simulateScenario(lab.environment, scenario);
   const result = simulation.result;
 
   console.log("");

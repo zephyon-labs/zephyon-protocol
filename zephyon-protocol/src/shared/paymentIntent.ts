@@ -1,3 +1,5 @@
+import type { MoneyAmount } from "./money";
+
 export type PaymentIntentStatus =
   | "draft"
   | "validated"
@@ -42,17 +44,22 @@ export type PaymentIntent = {
   recipientId: string;
 
   /**
+   * Human/business-facing payment amount.
+   */
+  money: MoneyAmount;
+
+  /**
    * Recipient wallet address.
    */
   recipientWallet: string;
 
   /**
-   * Token mint.
+   * Token mint used by the settlement adapter.
    */
   mint: string;
 
   /**
-   * Raw protocol amount.
+   * Raw protocol amount used by the settlement adapter.
    */
   amountRaw: number;
 

@@ -46,16 +46,7 @@ export class PaymentRuntime {
     });
 
     try {
-      const decision = await emitter.measure(
-        {
-          startedType: RuntimeEventType.PolicyStarted,
-          completedType: RuntimeEventType.PolicyCompleted,
-          failedType: RuntimeEventType.PolicyFailed,
-          stage: "policy",
-          message: "Evaluating payment decision pipeline.",
-        },
-        () => this.decisionPipeline.evaluate(context)
-      );
+      const decision = await this.decisionPipeline.evaluate(context, emitter);
 
       if (decision.status !== "approved") {
         emitter.emit({

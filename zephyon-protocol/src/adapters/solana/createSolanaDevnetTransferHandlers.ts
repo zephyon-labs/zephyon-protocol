@@ -1,40 +1,36 @@
-import { Connection, PublicKey } from "@solana/web3.js";
+import { Connection } from "@solana/web3.js";
 import type {
   SolanaSettlementResult,
   SolanaTransferRequest,
   SolanaTransferResult,
 } from "./SolanaPaymentAdapter";
 import type { ProtocolEnvironment } from "../../protocolLab/config";
+import { executeZephyonDevnetSplPay } from "./executeZephyonDevnetSplPay";
 
 export type SolanaDevnetTransferHandlersConfig = {
   environment: ProtocolEnvironment;
 };
 
 export function createSolanaDevnetTransferHandlers(
-  config: SolanaDevnetTransferHandlersConfig
+  config: SolanaDevnetTransferHandlersConfig,
 ): {
-  executeTransfer: (request: SolanaTransferRequest) => Promise<SolanaTransferResult>;
+  executeTransfer: (
+    request: SolanaTransferRequest,
+  ) => Promise<SolanaTransferResult>;
   confirmTransfer: (
-    request: SolanaTransferRequest & { signature: string }
+    request: SolanaTransferRequest & { signature: string },
   ) => Promise<SolanaSettlementResult>;
 } {
-  const connection = new Connection(config.environment.rpcEndpoint.url, "confirmed");
+  const connection = new Connection(
+    config.environment.rpcEndpoint.url,
+    "confirmed",
+  );
 
   return {
     async executeTransfer(request) {
-      if (!config.environment.treasuryPda) {
-        throw new Error("Treasury PDA is not configured.");
-      }
-
-      const recipientWallet = new PublicKey(request.intent.recipientWallet);
-      const mint = new PublicKey(request.intent.mint);
-
-      void recipientWallet;
-      void mint;
-
-      throw new Error(
-        "Solana devnet transfer execution is not wired to a signer/provider yet."
-      );
+      return executeZephyonDevnetSplPay(request, {
+        rpcUrl: config.environment.rpcEndpoint.url,
+      });
     },
 
     async confirmTransfer(request) {
@@ -48,7 +44,7 @@ export function createSolanaDevnetTransferHandlers(
 
       if (status.value.err) {
         throw new Error(
-          `Solana transaction failed: ${JSON.stringify(status.value.err)}`
+          `Solana transaction failed: ${JSON.stringify(status.value.err)}`,
         );
       }
 

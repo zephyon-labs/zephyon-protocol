@@ -24,7 +24,9 @@ export class PaymentRuntime {
   getEvents() {
     return this.eventBus.getEvents();
   }
-
+    getEventBus(): RuntimeEventBus {
+    return this.eventBus;
+  }
   async execute(context: ExecutionContext): Promise<PaymentRuntimeResult> {
     const emitter = createRuntimeEventEmitter(this.eventBus, {
       runtimeId: context.requestId,

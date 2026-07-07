@@ -37,25 +37,6 @@ export type PaymentOrchestrationFailure = {
   recoverable: boolean;
 };
 
-export type PaymentOrchestrationContext = {
-  orchestratorId?: PaymentOrchestratorId;
-  requestedAt: IsoTimestamp;
-  environment?: string;
-  requestId?: string;
-  actorId?: string;
-  metadata?: PaymentTransactionMetadata;
-};
-
-export type PaymentOrchestratorValidationResult = {
-  valid: boolean;
-  failure?: PaymentOrchestrationFailure;
-};
-
-export type PaymentRailResolutionResult = {
-  rail: PaymentRail;
-  reason?: string;
-};
-
 export type PaymentExecutionResult = {
   submittedAt?: IsoTimestamp;
   blockchain?: BlockchainSettlementDetails;
@@ -68,6 +49,48 @@ export type PaymentSettlementResult = {
 
 export type PaymentReceiptCreationResult = {
   receipt?: PaymentReceipt;
+};
+
+export type PaymentOrchestrationLifecycleHooks = {
+  transactionSubmitted?: (
+    transaction: PaymentTransaction,
+  ) => void | Promise<void>;
+
+  transactionAccepted?: (
+    transaction: PaymentTransaction,
+  ) => void | Promise<void>;
+
+  transactionConfirmed?: (
+    transaction: PaymentTransaction,
+  ) => void | Promise<void>;
+
+  transactionFinalized?: (
+    transaction: PaymentTransaction,
+  ) => void | Promise<void>;
+
+  receiptCreated?: (
+    result: PaymentReceiptCreationResult,
+  ) => void | Promise<void>;
+};
+
+export type PaymentOrchestrationContext = {
+  orchestratorId?: PaymentOrchestratorId;
+  requestedAt: IsoTimestamp;
+  environment?: string;
+  requestId?: string;
+  actorId?: string;
+  metadata?: PaymentTransactionMetadata;
+  lifecycle?: PaymentOrchestrationLifecycleHooks;
+};
+
+export type PaymentOrchestratorValidationResult = {
+  valid: boolean;
+  failure?: PaymentOrchestrationFailure;
+};
+
+export type PaymentRailResolutionResult = {
+  rail: PaymentRail;
+  reason?: string;
 };
 
 export type PaymentOrchestrationResult = {
@@ -84,37 +107,37 @@ export type PaymentOrchestratorIdFactory = () => PaymentTransactionId;
 
 export type PaymentIntentValidator = (
   intent: PaymentIntent,
-  context: PaymentOrchestrationContext
+  context: PaymentOrchestrationContext,
 ) =>
   | PaymentOrchestratorValidationResult
   | Promise<PaymentOrchestratorValidationResult>;
 
 export type PaymentRailResolver = (
   intent: PaymentIntent,
-  context: PaymentOrchestrationContext
+  context: PaymentOrchestrationContext,
 ) => PaymentRailResolutionResult | Promise<PaymentRailResolutionResult>;
 
 export type PaymentExecutor = (
   intent: PaymentIntent,
   transaction: PaymentTransaction,
-  context: PaymentOrchestrationContext
+  context: PaymentOrchestrationContext,
 ) => PaymentExecutionResult | Promise<PaymentExecutionResult>;
 
 export type PaymentSettlementMonitor = (
   intent: PaymentIntent,
   transaction: PaymentTransaction,
-  context: PaymentOrchestrationContext
+  context: PaymentOrchestrationContext,
 ) => PaymentSettlementResult | Promise<PaymentSettlementResult>;
 
 export type PaymentReceiptCreator = (
   intent: PaymentIntent,
   transaction: PaymentTransaction,
-  context: PaymentOrchestrationContext
+  context: PaymentOrchestrationContext,
 ) => PaymentReceiptCreationResult | Promise<PaymentReceiptCreationResult>;
 
 export type PaymentHistoryRecorder = (
   result: PaymentOrchestrationResult,
-  context: PaymentOrchestrationContext
+  context: PaymentOrchestrationContext,
 ) => void | Promise<void>;
 
 export type PaymentOrchestratorConfig = {
@@ -169,13 +192,13 @@ export class PaymentOrchestrator {
           createOrchestrationFailure(
             "PAYMENT_VALIDATION_FAILED",
             "Payment intent failed validation.",
-            false
+            false,
           );
 
         transaction = markTransactionFailed(
           transaction,
           this.config.clock(),
-          orchestrationFailureToTransactionFailure(failure)
+          orchestrationFailureToTransactionFailure(failure),
         );
 
         return this.finalize(
@@ -185,48 +208,59 @@ export class PaymentOrchestrator {
             transaction,
             failure,
           },
-          context
+          context,
         );
       }
 
       transaction = markTransactionReady(transaction, this.config.clock());
-
       transaction = markTransactionProcessing(transaction, this.config.clock());
 
       const execution = await this.config.executePayment(
         intent,
         transaction,
-        context
+        context,
       );
+
+      await context.lifecycle?.transactionSubmitted?.(transaction);
 
       transaction = markTransactionAwaitingSettlement(
         transaction,
         this.config.clock(),
-        execution.blockchain
+        execution.blockchain,
       );
+
+      await context.lifecycle?.transactionAccepted?.(transaction);
 
       const settlement = await this.config.monitorSettlement(
         intent,
         transaction,
-        context
+        context,
       );
 
       transaction = markTransactionSettled(
         transaction,
         this.config.clock(),
         settlement.settledAt ?? this.config.clock(),
-        settlement.blockchain ?? execution.blockchain
+        settlement.blockchain ?? execution.blockchain,
       );
+
+      await context.lifecycle?.transactionConfirmed?.(transaction);
 
       transaction = markTransactionCompleted(
         transaction,
         this.config.clock(),
-        this.config.clock()
+        this.config.clock(),
       );
+
+      await context.lifecycle?.transactionFinalized?.(transaction);
 
       const receiptResult = this.config.createReceipt
         ? await this.config.createReceipt(intent, transaction, context)
         : undefined;
+
+      if (receiptResult) {
+        await context.lifecycle?.receiptCreated?.(receiptResult);
+      }
 
       return this.finalize(
         {
@@ -235,7 +269,7 @@ export class PaymentOrchestrator {
           transaction,
           receipt: receiptResult?.receipt,
         },
-        context
+        context,
       );
     } catch (error) {
       const failure = normalizeOrchestrationError(error);
@@ -244,7 +278,7 @@ export class PaymentOrchestrator {
         transaction = markTransactionFailed(
           transaction,
           this.config.clock(),
-          orchestrationFailureToTransactionFailure(failure)
+          orchestrationFailureToTransactionFailure(failure),
         );
       }
 
@@ -255,14 +289,14 @@ export class PaymentOrchestrator {
           transaction,
           failure,
         },
-        context
+        context,
       );
     }
   }
 
   private async finalize(
     result: PaymentOrchestrationResult,
-    context: PaymentOrchestrationContext
+    context: PaymentOrchestrationContext,
   ): Promise<PaymentOrchestrationResult> {
     if (this.config.recordHistory) {
       await this.config.recordHistory(result, context);
@@ -275,7 +309,7 @@ export class PaymentOrchestrator {
 function createOrchestrationFailure(
   code: string,
   reason: string,
-  recoverable: boolean
+  recoverable: boolean,
 ): PaymentOrchestrationFailure {
   return {
     code,
@@ -285,7 +319,7 @@ function createOrchestrationFailure(
 }
 
 function orchestrationFailureToTransactionFailure(
-  failure: PaymentOrchestrationFailure
+  failure: PaymentOrchestrationFailure,
 ): PaymentTransactionFailure {
   return {
     code: failure.code,

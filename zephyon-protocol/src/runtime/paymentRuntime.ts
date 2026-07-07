@@ -1,4 +1,7 @@
-import type { PaymentOrchestrationResult, PaymentOrchestrator } from "../shared/paymentOrchestrator";
+import type {
+  PaymentOrchestrationResult,
+  PaymentOrchestrator,
+} from "../shared/paymentOrchestrator";
 import type { ExecutionContext } from "./executionContext";
 import type { PaymentDecisionPipeline } from "./paymentDecisionPipeline";
 import type { PaymentDecisionResult } from "./paymentDecisionResult";
@@ -18,15 +21,17 @@ export class PaymentRuntime {
   constructor(
     private readonly decisionPipeline: PaymentDecisionPipeline,
     private readonly orchestrator: PaymentOrchestrator,
-    private readonly eventBus: RuntimeEventBus = createRuntimeEventBus()
+    private readonly eventBus: RuntimeEventBus = createRuntimeEventBus(),
   ) {}
 
   getEvents() {
     return this.eventBus.getEvents();
   }
-    getEventBus(): RuntimeEventBus {
+
+  getEventBus(): RuntimeEventBus {
     return this.eventBus;
   }
+
   async execute(context: ExecutionContext): Promise<PaymentRuntimeResult> {
     const emitter = createRuntimeEventEmitter(this.eventBus, {
       runtimeId: context.requestId,
@@ -96,8 +101,77 @@ export class PaymentRuntime {
               requestId: context.requestId,
               actorId: context.participant?.id,
               metadata: context.metadata,
+              lifecycle: {
+                transactionSubmitted: (transaction) => {
+                  emitter.emit({
+                    type: RuntimeEventType.TransactionSubmitted,
+                    stage: "transaction",
+                    status: "started",
+                    message: "Transaction submitted to payment rail.",
+                    metadata: {
+                      transactionId: transaction.id,
+                      rail: transaction.rail,
+                      status: transaction.status,
+                    },
+                  });
+                },
+
+                transactionAccepted: (transaction) => {
+                  emitter.emit({
+                    type: RuntimeEventType.TransactionAccepted,
+                    stage: "transaction",
+                    status: "completed",
+                    message: "Transaction accepted by payment rail.",
+                    metadata: {
+                      transactionId: transaction.id,
+                      rail: transaction.rail,
+                      status: transaction.status,
+                    },
+                  });
+                },
+
+                transactionConfirmed: (transaction) => {
+                  emitter.emit({
+                    type: RuntimeEventType.TransactionConfirmed,
+                    stage: "transaction",
+                    status: "completed",
+                    message: "Transaction settlement confirmed.",
+                    metadata: {
+                      transactionId: transaction.id,
+                      rail: transaction.rail,
+                      status: transaction.status,
+                    },
+                  });
+                },
+
+                transactionFinalized: (transaction) => {
+                  emitter.emit({
+                    type: RuntimeEventType.TransactionFinalized,
+                    stage: "transaction",
+                    status: "completed",
+                    message: "Transaction finalized.",
+                    metadata: {
+                      transactionId: transaction.id,
+                      rail: transaction.rail,
+                      status: transaction.status,
+                    },
+                  });
+                },
+
+                receiptCreated: (receiptResult) => {
+                  emitter.emit({
+                    type: RuntimeEventType.ReceiptCreated,
+                    stage: "receipt",
+                    status: "completed",
+                    message: "Payment receipt created.",
+                    metadata: {
+                      receipt: receiptResult.receipt,
+                    },
+                  });
+                },
+              },
             },
-          })
+          }),
       );
 
       emitter.emit({
@@ -126,7 +200,8 @@ export class PaymentRuntime {
         type: RuntimeEventType.RuntimeFailed,
         stage: "runtime",
         status: "failed",
-        message: error instanceof Error ? error.message : "Unknown runtime failure.",
+        message:
+          error instanceof Error ? error.message : "Unknown runtime failure.",
         metadata: {
           error,
         },

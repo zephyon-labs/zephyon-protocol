@@ -21,3 +21,5 @@ Thumbs.db
 **/keys/*.json
 zephipay-frontend/
 zephipay-backend/
+/zephipay-site/
+/zephyon-site/

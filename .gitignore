@@ -50,3 +50,7 @@ zephyon-protocol_SDK_OLD/
 # Protocol Lab generated artifacts
 .devnet-participants/
 protocol-lab-ledgers/
+
+# Generated TypeScript SDK artifacts
+dist/
+*.tgz

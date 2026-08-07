@@ -1,5 +1,7 @@
 export type PaymentRail =
+  | "mock"
   | "solana"
+  | "card"
   | "ach"
   | "fednow"
   | "rtp"

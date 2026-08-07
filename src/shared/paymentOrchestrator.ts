@@ -159,6 +159,7 @@ export type ExecutePaymentInput = {
   context: PaymentOrchestrationContext;
 };
 
+/** @deprecated Use RuntimeExecutionFacade; durable orchestration belongs in the backend. */
 export class PaymentOrchestrator {
   private readonly config: PaymentOrchestratorConfig;
 

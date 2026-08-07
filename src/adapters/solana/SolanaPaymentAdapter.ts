@@ -63,6 +63,7 @@ export type SolanaPaymentAdapterConfig = {
   clock?: () => IsoTimestamp;
 };
 
+/** @deprecated Use CanonicalSolanaPaymentRailAdapter with RuntimeExecutionFacade. */
 export class SolanaPaymentAdapter implements PaymentRailAdapter {
   readonly rail = "solana" as const;
 

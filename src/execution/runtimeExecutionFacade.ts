@@ -2,16 +2,17 @@ import { createExecutionFailure, recommendRecovery, type RecoveryRecommendation 
 import { createCanonicalExecutionContext, createRailExecutionCommand, type CanonicalExecutionContext } from "./executionContext";
 import { parseReconciliationReference } from "./identifiers";
 import { normalizeSubmissionException, type ReconciliationOutcome, type ReconciliationRequest, type SubmissionOutcome } from "./outcomes";
-import type { CanonicalPaymentRailAdapter, PreparedSubmission, RailOperationContext } from "./railAdapter";
+import { RailProviderOperationError, type CanonicalPaymentRailAdapter, type PreparedSubmission, type RailOperationContext } from "./railAdapter";
 import type { RailEvidence } from "./railEvidence";
 import type { SettlementObservation } from "./settlementObservation";
 import { createRuntimeExecutionEvent, recoveryEventPayload, type RuntimeEventDependencies, type RuntimeExecutionEvent } from "./runtimeEvents";
 
 export type CanonicalRailAdapterRegistry = ReadonlyMap<string, CanonicalPaymentRailAdapter>;
 
-export class AdapterSubmissionError extends Error {
+/** @deprecated Throw RailProviderOperationError directly from new adapters. */
+export class AdapterSubmissionError extends RailProviderOperationError {
   constructor(message: string, readonly providerContact: "not_started" | "may_have_occurred") {
-    super(message);
+    super(message, providerContact);
     this.name = "AdapterSubmissionError";
   }
 }
@@ -40,7 +41,7 @@ export class RuntimeExecutionFacade {
     try {
       outcome = await adapter.submit(execution.prepared, operation);
     } catch (error) {
-      const certainty = error instanceof AdapterSubmissionError ? error.providerContact : "may_have_occurred";
+      const certainty = error instanceof RailProviderOperationError ? error.providerContact : "may_have_occurred";
       outcome = normalizeSubmissionException({ error, providerContact: certainty, reconciliationReference: parseReconciliationReference(`runtime:${operation.executionId}`), observedAt: operation.invokedAt, correlationId: operation.correlationId });
     }
     return this.submissionResult(execution.context, outcome, events);

@@ -1,6 +1,7 @@
 import type { SettlementService } from "./settlementService";
 import type { SettlementState } from "./settlementState";
 
+/** @deprecated Legacy settlement engine; durable state belongs in the backend. */
 export class SettlementEngine {
   constructor(private readonly service: SettlementService) {}
 

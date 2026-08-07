@@ -17,6 +17,7 @@ export type PaymentRuntimeResult = {
   orchestration?: PaymentOrchestrationResult;
 };
 
+/** @deprecated Use RuntimeExecutionFacade with explicit prepare, submit, and reconcile operations. */
 export class PaymentRuntime {
   constructor(
     private readonly decisionPipeline: PaymentDecisionPipeline,

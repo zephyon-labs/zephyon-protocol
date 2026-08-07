@@ -1,3 +1,4 @@
+/** @deprecated Solana-shaped v0.1 receipt. Use RuntimeReceipt for canonical execution. */
 export type PaymentReceipt = {
   /**
    * Receipt identifier.

@@ -47,6 +47,7 @@ export type PaymentAdapterRefundResult = {
   refundReference?: string;
 };
 
+/** @deprecated Use CanonicalPaymentRailAdapter from the execution module. */
 export type PaymentRailAdapter = {
   rail: PaymentRail;
 

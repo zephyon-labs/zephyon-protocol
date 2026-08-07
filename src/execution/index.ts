@@ -9,4 +9,5 @@ export * from "./runtimeReceipt";
 export * from "./mockRail";
 export * from "./runtimeEvents";
 export * from "./runtimeExecutionFacade";
+export * from "./canonicalSolanaRail";
 export * from "./railAdapter";

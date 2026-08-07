@@ -91,6 +91,17 @@ export interface RailFeeCapability {
   estimateFee(command: RailExecutionCommand): Promise<ExactAmount>;
 }
 
+/** Bounded adapter error carrying certainty about whether provider contact began. */
+export class RailProviderOperationError extends Error {
+  constructor(
+    message: string,
+    readonly providerContact: "not_started" | "may_have_occurred",
+  ) {
+    super(message);
+    this.name = "RailProviderOperationError";
+  }
+}
+
 export function assertPreparedSubmissionMatchesOperation(
   prepared: PreparedSubmission,
   context: RailOperationContext,

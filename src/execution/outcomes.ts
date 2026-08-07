@@ -41,6 +41,7 @@ export type ReconciliationRequest = Readonly<{
   providerIdempotencyKey: ProviderIdempotencyKey;
   providerReference?: ProviderReference;
   reconciliationReference: ReconciliationReference;
+  observationSequence?: number;
 }>;
 
 export type ReconciliationOutcome<E extends RailEvidence = RailEvidence> =

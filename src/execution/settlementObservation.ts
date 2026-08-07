@@ -5,7 +5,7 @@ import type { RailEvidence } from "./railEvidence";
 export type SettlementObservation<E extends RailEvidence = RailEvidence> =
   | Readonly<{
       outcome: "pending";
-      providerReference: ProviderReference;
+      providerReference?: ProviderReference;
       observedAt: string;
       evidence?: E;
     }>

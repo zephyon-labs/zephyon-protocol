@@ -10,4 +10,6 @@ export * from "./mockRail";
 export * from "./runtimeEvents";
 export * from "./runtimeExecutionFacade";
 export * from "./canonicalSolanaRail";
+export * from "./canonicalSolanaRpcTransport";
+export * from "./devnetSigner";
 export * from "./railAdapter";

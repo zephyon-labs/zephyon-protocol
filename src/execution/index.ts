@@ -12,4 +12,7 @@ export * from "./runtimeExecutionFacade";
 export * from "./canonicalSolanaRail";
 export * from "./canonicalSolanaRpcTransport";
 export * from "./devnetSigner";
+export * from "./devnetSubmissionContract";
+export * from "./devnetTransactionValidation";
+export * from "./referenceDevnetTransactionPreparer";
 export * from "./railAdapter";

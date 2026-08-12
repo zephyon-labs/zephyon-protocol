@@ -25,6 +25,11 @@ export type SolanaPreparedTransaction = Readonly<{
   signerKeyId?: string;
   signerKeyVersion?: string;
   signerPublicKey?: string;
+  signedTransactionDigest?: string;
+  decimals?: number;
+  policyHash?: string;
+  submissionProviderId?: string;
+  reconciliationProviderId?: string;
 }>;
 
 export type CanonicalSolanaPreparedSubmission = PreparedSubmission & Readonly<{
@@ -43,6 +48,12 @@ export type CanonicalSolanaPreparedSubmission = PreparedSubmission & Readonly<{
     signerKeyId?: string;
     signerKeyVersion?: string;
     signerPublicKey?: string;
+    signedTransactionDigest?: string;
+    decimals?: number;
+    policyHash?: string;
+    submissionProviderId?: string;
+    reconciliationProviderId?: string;
+    submissionCommitment?: import("./devnetSubmissionContract").DevnetSubmissionCommitment;
   }>;
 }>;
 
@@ -100,7 +111,8 @@ export class CanonicalSolanaPaymentRailAdapter implements CanonicalPaymentRailAd
   }
 
   async reconcile(request: ReconciliationRequest, context: RailOperationContext): Promise<ReconciliationOutcome<SolanaRailEvidence>> {
-    const signature = request.providerReference ?? signatureFromReconciliation(request.reconciliationReference);
+    const signature = signatureFromReconciliation(request.reconciliationReference);
+    if (request.providerReference && request.providerReference !== signature) throw new Error("Solana reconciliation references disagree.");
     let observation: SolanaChainObservation;
     try { observation = await this.transport.getSignatureObservation(signature); }
     catch (error) { return Object.freeze({ outcome: "unknown", observedAt: context.invokedAt, failure: createExecutionFailure({ code: "RECONCILIATION_FAILED", category: "reconciliation", stage: "reconciliation", phase: "reconciliation", sideEffect: "may_have_occurred", message: error instanceof Error ? error.message : "Solana status unavailable.", occurredAt: context.invokedAt, correlationId: context.correlationId }) }); }

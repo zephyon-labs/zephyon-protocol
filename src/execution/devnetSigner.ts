@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { decodeCanonicalBase64, digestBytes } from "./devnetTransactionValidation";
 
 export type DevnetSigningContext = Readonly<{
   cluster: "solana-devnet";
@@ -24,5 +24,5 @@ export function assertDevnetSignerIdentity(signer: DevnetTransactionSigner): voi
 }
 
 export function signedTransactionDigest(signedTransactionBase64: string): string {
-  return createHash("sha256").update(Buffer.from(signedTransactionBase64, "base64")).digest("hex");
+  return digestBytes(decodeCanonicalBase64(signedTransactionBase64));
 }

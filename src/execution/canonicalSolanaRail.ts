@@ -41,6 +41,7 @@ export type CanonicalSolanaPreparedSubmission = PreparedSubmission & Readonly<{
     mint: string;
     rawAmount: string;
     destination: string;
+    sourceTokenAccount?: string;
     programId?: string;
     receiptPda?: string;
     recentBlockhash?: string;

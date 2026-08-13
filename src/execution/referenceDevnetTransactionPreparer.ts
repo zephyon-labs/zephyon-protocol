@@ -35,7 +35,7 @@ export class ReferenceSolanaDevnetTransactionPreparer implements SolanaTransacti
     private readonly signer: DevnetTransactionSigner,
   ) {
     assertDevnetSignerIdentity(signer);
-    if (policy.cluster !== "solana-devnet" || !policy.policyHash.trim() || !policy.submissionProviderId.trim() || !policy.reconciliationProviderId.trim()) throw new Error("Devnet preparation policy is incomplete.");
+    if (policy.cluster !== "solana-devnet" || !policy.policyHash.trim() || !isTrimmedProviderId(policy.submissionProviderId) || !isTrimmedProviderId(policy.reconciliationProviderId)) throw new Error("Devnet preparation policy is incomplete.");
     if (policy.submissionProviderId === policy.reconciliationProviderId) throw new Error("Devnet submission and reconciliation providers must be independent.");
     if (!Number.isInteger(policy.decimals) || policy.decimals < 0 || policy.decimals > 255) throw new Error("Devnet mint decimals are invalid.");
     new PublicKey(policy.mint); new PublicKey(policy.sourceTokenAccount); new PublicKey(signer.publicKey);
@@ -76,6 +76,7 @@ export class ReferenceSolanaDevnetTransactionPreparer implements SolanaTransacti
       mint: this.policy.mint,
       rawAmount: command.amount.units,
       destination: command.destination.address,
+      sourceTokenAccount: this.policy.sourceTokenAccount,
       decimals: this.policy.decimals,
       recentBlockhash: blockhash.recentBlockhash,
       lastValidBlockHeight: blockhash.lastValidBlockHeight,
@@ -87,4 +88,8 @@ export class ReferenceSolanaDevnetTransactionPreparer implements SolanaTransacti
       reconciliationProviderId: this.policy.reconciliationProviderId,
     });
   }
+}
+
+function isTrimmedProviderId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.trim() === value;
 }

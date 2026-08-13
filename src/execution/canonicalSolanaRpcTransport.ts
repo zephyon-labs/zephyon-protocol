@@ -3,6 +3,7 @@ import type { RailExecutionCommand } from "./executionContext";
 import type { CanonicalSolanaPreparedSubmission, CanonicalSolanaRailTransport, SolanaChainObservation, SolanaPreparedTransaction, SolanaSubmissionResult } from "./canonicalSolanaRail";
 import { assertCommittedDevnetSubmission } from "./devnetSubmissionContract";
 import { inspectSignedSolanaTransaction } from "./devnetTransactionValidation";
+import { assertExactDevnetTransferChecked } from "./devnetTransferCheckedValidation";
 
 export type SolanaRpcProviderRole = Readonly<{ providerId: string; network: "devnet"; role: "submission" | "reconciliation" }>;
 export type SolanaRpcSubmitResponse = Readonly<{ signature: string; acceptedAt: string }>;
@@ -29,6 +30,7 @@ export type SolanaDevnetPreparedTransaction = SolanaPreparedTransaction & Readon
   mint: string;
   rawAmount: string;
   destination: string;
+  sourceTokenAccount: string;
   decimals: number;
   recentBlockhash: string;
   lastValidBlockHeight: string;
@@ -52,6 +54,8 @@ export class ProviderIndependentSolanaDevnetTransport implements CanonicalSolana
     private readonly submission: SolanaSubmissionRpc,
     private readonly reconciliation: SolanaReconciliationRpc,
   ) {
+    assertProviderId(submission.identity.providerId, "submission");
+    assertProviderId(reconciliation.identity.providerId, "reconciliation");
     if (submission.identity.network !== "devnet" || submission.identity.role !== "submission") throw new Error("A Devnet submission provider is required.");
     if (reconciliation.identity.network !== "devnet" || reconciliation.identity.role !== "reconciliation") throw new Error("A Devnet reconciliation provider is required.");
     if (submission.identity.providerId === reconciliation.identity.providerId) throw new Error("Submission and reconciliation providers must be independent.");
@@ -103,10 +107,13 @@ function assertPreparedArtifact(
 ): void {
   if (command.rail !== "solana" || command.destination.type !== "wallet" || command.destination.network !== "solana-devnet") throw new Error("Devnet preparation requires a trusted solana-devnet command.");
   if (prepared.cluster !== "solana-devnet" || prepared.rawAmount !== command.amount.units || prepared.destination !== command.destination.address || prepared.decimals !== command.amount.decimals) throw new Error("Prepared Devnet artifact does not match the authoritative command.");
+  assertProviderId(prepared.submissionProviderId, "prepared submission");
+  assertProviderId(prepared.reconciliationProviderId, "prepared reconciliation");
   if (prepared.submissionProviderId !== submissionProviderId || prepared.reconciliationProviderId !== reconciliationProviderId) throw new Error("Prepared Devnet artifact provider identities do not match configured policy.");
   if (!prepared.mint || !prepared.policyHash || !prepared.signerKeyId || !prepared.signerKeyVersion || !prepared.lastValidBlockHeight || !/^(0|[1-9]\d*)$/.test(prepared.lastValidBlockHeight)) throw new Error("Prepared Devnet artifact metadata is incomplete.");
   const inspected = inspectSignedSolanaTransaction(prepared.signedTransactionBase64);
   if (inspected.signature !== prepared.signature || inspected.signerPublicKey !== prepared.signerPublicKey || inspected.recentBlockhash !== prepared.recentBlockhash || inspected.signedTransactionDigest !== prepared.signedTransactionDigest) throw new Error("Prepared Devnet artifact does not match its exact signed transaction bytes.");
+  assertExactDevnetTransferChecked(inspected.bytes, prepared);
 }
 
 function assertPayloadMatchesBytes(
@@ -118,5 +125,21 @@ function assertPayloadMatchesBytes(
   const payload = prepared.payload;
   if (payload.cluster !== "solana-devnet" || payload.signature !== inspected.signature || payload.signerPublicKey !== inspected.signerPublicKey || payload.recentBlockhash !== inspected.recentBlockhash || payload.signedTransactionDigest !== inspected.signedTransactionDigest) throw new Error("Persisted Devnet metadata does not match the exact signed transaction bytes.");
   if (!payload.mint || !payload.destination || !payload.rawAmount || payload.decimals === undefined || !payload.lastValidBlockHeight || !payload.signerKeyId || !payload.signerKeyVersion || !payload.policyHash) throw new Error("Persisted Devnet artifact metadata is incomplete.");
+  if (!payload.sourceTokenAccount) throw new Error("Persisted Devnet source token account is required.");
+  assertProviderId(payload.submissionProviderId, "persisted submission");
+  assertProviderId(payload.reconciliationProviderId, "persisted reconciliation");
   if (payload.submissionProviderId !== submissionProviderId || payload.reconciliationProviderId !== reconciliationProviderId) throw new Error("Persisted Devnet provider identities do not match configured policy.");
+  assertExactDevnetTransferChecked(inspected.bytes, {
+    sourceTokenAccount: payload.sourceTokenAccount,
+    mint: payload.mint,
+    destination: payload.destination,
+    signerPublicKey: payload.signerPublicKey!,
+    rawAmount: payload.rawAmount,
+    decimals: payload.decimals,
+    recentBlockhash: payload.recentBlockhash!,
+  });
+}
+
+function assertProviderId(value: unknown, role: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0 || value.trim() !== value) throw new Error(`Devnet ${role} providerId must be a non-empty trimmed string.`);
 }

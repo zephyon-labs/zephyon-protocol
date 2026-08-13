@@ -188,6 +188,14 @@ The current deployment environment supports:
 
 The devnet environment is actively used to validate payment flow behavior, governance controls, receipt infrastructure, and frontend integration systems.
 
+## Runtime SDK v0.3.0 Devnet flow
+
+The v0.3.0 SDK prepares one immutable Solana Devnet SPL Token `transferChecked` artifact without submitting it. The backend must durably persist the complete artifact, including its exact signed bytes, signature, digest, signer and blockhash metadata, authoritative transfer values, and submission/reconciliation provider identities.
+
+Before calling Runtime submission, the backend must durably commit the execution to `SUBMISSION_COMMITTED_RECONCILE_ONLY` and attach the matching commitment. Submission then validates and sends the exact persisted bytes; it does not rebuild or mutate the transaction. After that commitment, the transaction must never be automatically submitted again. Recovery uses only its persisted signature through the independently configured reconciliation provider.
+
+A submission kill switch should prevent the backend from initiating new submission calls, while leaving the transport and reconciliation provider available for existing executions. Reconciliation does not contact the configured submission provider. If a blockhash expires in `PREPARING` or `PREPARED_NOT_CONTACTED`, the backend may abandon that never-contacted artifact and start a fresh preparation lifecycle. Expiry after `SUBMISSION_COMMITTED_RECONCILE_ONLY` remains reconciliation-only and never authorizes regeneration or resubmission. See `docs/devnet-durable-submission-contract.md` for the complete durability contract.
+
 ---
 
 # Whitepaper
@@ -269,5 +277,4 @@ The objective is not simply to increase blockchain activity, but to help make bl
 # License
 
 License information to be added.
-
 

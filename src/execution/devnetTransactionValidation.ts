@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import bs58 from "bs58";
+import { ed25519 } from "@noble/curves/ed25519";
 import { Transaction, VersionedTransaction } from "@solana/web3.js";
 
 export type InspectedSolanaTransaction = Readonly<{
@@ -27,6 +28,7 @@ export function inspectSignedSolanaTransaction(signedTransactionBase64: string):
     const first = transaction.signatures[0];
     if (!first?.signature) throw new Error("missing signature");
     if (!transaction.recentBlockhash) throw new Error("missing recent blockhash");
+    verifyRequiredSignatures(transaction.serializeMessage(), transaction.signatures.map(({ publicKey, signature }) => ({ publicKey: publicKey.toBytes(), signature })));
     return Object.freeze({ bytes, signature: bs58.encode(first.signature), signerPublicKey: first.publicKey.toBase58(), recentBlockhash: transaction.recentBlockhash, signedTransactionDigest: digestBytes(bytes) });
   } catch (legacyError) {
     try {
@@ -34,10 +36,23 @@ export function inspectSignedSolanaTransaction(signedTransactionBase64: string):
       const first = transaction.signatures[0];
       const signer = transaction.message.staticAccountKeys[0];
       if (!first || first.every((byte) => byte === 0) || !signer) throw new Error("missing signature");
+      const requiredSignerCount = transaction.message.header.numRequiredSignatures;
+      verifyRequiredSignatures(transaction.message.serialize(), transaction.message.staticAccountKeys.slice(0, requiredSignerCount).map((publicKey, index) => ({ publicKey: publicKey.toBytes(), signature: transaction.signatures[index] })));
       return Object.freeze({ bytes, signature: bs58.encode(first), signerPublicKey: signer.toBase58(), recentBlockhash: transaction.message.recentBlockhash, signedTransactionDigest: digestBytes(bytes) });
     } catch {
       throw new Error(`Persisted Solana transaction is not parseable or signed (${legacyError instanceof Error ? legacyError.message : "invalid legacy transaction"}).`);
     }
+  }
+}
+
+function verifyRequiredSignatures(
+  message: Uint8Array,
+  signatures: ReadonlyArray<{ publicKey: Uint8Array; signature: Uint8Array | null | undefined }>,
+): void {
+  if (signatures.length === 0) throw new Error("missing required signer");
+  for (const value of signatures) {
+    if (!value.signature || value.signature.length !== 64 || value.signature.every((byte) => byte === 0)) throw new Error("missing signature");
+    if (!ed25519.verify(value.signature, message, value.publicKey)) throw new Error("invalid signature");
   }
 }
 

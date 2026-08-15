@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { createTransferCheckedInstruction, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { createTransferCheckedInstruction, getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   CanonicalSolanaPaymentRailAdapter,
@@ -20,6 +20,7 @@ const recipient = Keypair.generate().publicKey.toBase58();
 const mint = Keypair.generate().publicKey.toBase58();
 const source = Keypair.generate().publicKey.toBase58();
 const blockhash = Keypair.generate().publicKey.toBase58();
+const recipientAta = getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(recipient));
 const command: any = {
   schemaVersion: 1, requestId: "request:test", correlationId: "correlation:test", executionId: "execution:test",
   paymentIntentId: "payment:test", transactionId: "transaction:test", requestedAt: now, actorId: "actor:test", recipientId: "recipient:test",
@@ -30,7 +31,7 @@ const command: any = {
 function artifact(
   key = signer,
   override: Partial<SolanaDevnetPreparedTransaction> = {},
-  instruction = createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), new PublicKey(recipient), key.publicKey, 1n, 6),
+  instruction = createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), recipientAta, key.publicKey, 1n, 6),
   additionalSigners: Keypair[] = [],
 ): SolanaDevnetPreparedTransaction {
   const tx = new Transaction({ feePayer: key.publicKey, recentBlockhash: blockhash }).add(instruction);
@@ -80,15 +81,15 @@ describe("provider-independent Solana Devnet transport", () => {
     const authority = Keypair.generate();
     const cases = [
       artifact(signer, {}, SystemProgram.transfer({ fromPubkey: signer.publicKey, toPubkey: new PublicKey(recipient), lamports: 1 })),
-      artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), other(), new PublicKey(recipient), signer.publicKey, 1n, 6)),
+      artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), other(), recipientAta, signer.publicKey, 1n, 6)),
       artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), other(), signer.publicKey, 1n, 6)),
-      artifact(signer, {}, createTransferCheckedInstruction(other(), new PublicKey(mint), new PublicKey(recipient), signer.publicKey, 1n, 6)),
-      artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), new PublicKey(recipient), authority.publicKey, 1n, 6), [authority]),
-      artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), new PublicKey(recipient), signer.publicKey, 2n, 6)),
-      artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), new PublicKey(recipient), signer.publicKey, 1n, 5)),
-      artifact(signer, {}, new TransactionInstruction({ ...createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), new PublicKey(recipient), signer.publicKey, 1n, 6), programId: SystemProgram.programId })),
+      artifact(signer, {}, createTransferCheckedInstruction(other(), new PublicKey(mint), recipientAta, signer.publicKey, 1n, 6)),
+      artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), recipientAta, authority.publicKey, 1n, 6), [authority]),
+      artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), recipientAta, signer.publicKey, 2n, 6)),
+      artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), recipientAta, signer.publicKey, 1n, 5)),
+      artifact(signer, {}, new TransactionInstruction({ ...createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), recipientAta, signer.publicKey, 1n, 6), programId: SystemProgram.programId })),
     ];
-    const extra = createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), new PublicKey(recipient), signer.publicKey, 1n, 6);
+    const extra = createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), recipientAta, signer.publicKey, 1n, 6);
     const extraTx = new Transaction({ feePayer: signer.publicKey, recentBlockhash: blockhash }).add(extra, SystemProgram.transfer({ fromPubkey: signer.publicKey, toPubkey: other(), lamports: 1 }));
     extraTx.sign(signer);
     const extraBase64 = extraTx.serialize().toString("base64");
@@ -180,6 +181,18 @@ describe("provider-independent Solana Devnet transport", () => {
     const preparer = new ReferenceSolanaDevnetTransactionPreparer({ cluster: "solana-devnet", asset: "USDC", mint, decimals: 6, sourceTokenAccount: referenceSource, policyHash: "policy", submissionProviderId: "submit-rpc", reconciliationProviderId: "reconcile-rpc" }, { getLatestDevnetBlockhash: async () => { blockhashCalls++; return { recentBlockhash: blockhash, lastValidBlockHeight: "100" }; } }, referenceSigner);
     const value = await preparer.prepare(command);
     expect(value.rawAmount).to.equal("1"); expect(value.destination).to.equal(recipient); expect(signed).to.equal(1); expect(blockhashCalls).to.equal(1);
+    const decoded = Transaction.from(Buffer.from(value.signedTransactionBase64, "base64")).instructions[0];
+    expect(decoded.keys[2].pubkey.toBase58()).to.equal(recipientAta.toBase58());
+    expect(decoded.keys[2].pubkey.toBase58()).not.to.equal(recipient);
+  });
+
+  it("rejects a signed transferChecked that targets the wallet instead of its canonical ATA", async () => {
+    const walletDestination = artifact(signer, {}, createTransferCheckedInstruction(new PublicKey(source), new PublicKey(mint), new PublicKey(recipient), signer.publicKey, 1n, 6));
+    let calls = 0, rejected = false;
+    try { await transport(async () => { calls++; return {}; }, undefined, walletDestination).prepareTransaction(command); }
+    catch { rejected = true; }
+    expect(rejected).to.equal(true);
+    expect(calls).to.equal(0);
   });
 
   it("reference preparer rejects ambiguous provider identities", () => {

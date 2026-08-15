@@ -1,5 +1,5 @@
-import { decodeTransferCheckedInstruction, TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import { Transaction } from "@solana/web3.js";
+import { decodeTransferCheckedInstruction, getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { PublicKey, Transaction } from "@solana/web3.js";
 
 type ExpectedDevnetTransferChecked = Readonly<{
   sourceTokenAccount: string;
@@ -25,7 +25,8 @@ export function assertExactDevnetTransferChecked(bytes: Uint8Array, expected: Ex
   if (decoded.keys.multiSigners.length !== 0 || !decoded.keys.owner.isSigner) throw new Error("Devnet transferChecked authority must be the direct required signer.");
   if (decoded.keys.source.pubkey.toBase58() !== expected.sourceTokenAccount) throw new Error("Devnet transferChecked source token account does not match prepared metadata.");
   if (decoded.keys.mint.pubkey.toBase58() !== expected.mint) throw new Error("Devnet transferChecked mint does not match prepared metadata.");
-  if (decoded.keys.destination.pubkey.toBase58() !== expected.destination) throw new Error("Devnet transferChecked destination does not match prepared metadata.");
+  const expectedDestinationTokenAccount = getAssociatedTokenAddressSync(new PublicKey(expected.mint), new PublicKey(expected.destination));
+  if (!decoded.keys.destination.pubkey.equals(expectedDestinationTokenAccount)) throw new Error("Devnet transferChecked destination token account does not match the canonical wallet/mint ATA.");
   if (decoded.keys.owner.pubkey.toBase58() !== expected.signerPublicKey) throw new Error("Devnet transferChecked authority does not match the declared signer.");
   if (decoded.data.amount.toString() !== expected.rawAmount) throw new Error("Devnet transferChecked raw amount does not match prepared metadata.");
   if (decoded.data.decimals !== expected.decimals) throw new Error("Devnet transferChecked decimals do not match prepared metadata.");

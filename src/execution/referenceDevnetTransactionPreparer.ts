@@ -1,4 +1,4 @@
-import { createTransferCheckedInstruction, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { createTransferCheckedInstruction, getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { PublicKey, Transaction } from "@solana/web3.js";
 import type { RailExecutionCommand } from "./executionContext";
 import type { SolanaDevnetPreparedTransaction, SolanaTransactionPreparer } from "./canonicalSolanaRpcTransport";
@@ -49,11 +49,13 @@ export class ReferenceSolanaDevnetTransactionPreparer implements SolanaTransacti
     const blockhash = await this.blockhashSource.getLatestDevnetBlockhash();
     if (!/^(0|[1-9]\d*)$/.test(blockhash.lastValidBlockHeight)) throw new Error("Devnet lastValidBlockHeight must be a canonical integer string.");
     const signerPublicKey = new PublicKey(this.signer.publicKey);
+    const destinationWallet = new PublicKey(command.destination.address);
+    const destinationTokenAccount = getAssociatedTokenAddressSync(new PublicKey(this.policy.mint), destinationWallet);
     const transaction = new Transaction({ feePayer: signerPublicKey, recentBlockhash: blockhash.recentBlockhash });
     transaction.add(createTransferCheckedInstruction(
       new PublicKey(this.policy.sourceTokenAccount),
       new PublicKey(this.policy.mint),
-      new PublicKey(command.destination.address),
+      destinationTokenAccount,
       signerPublicKey,
       amount,
       this.policy.decimals,

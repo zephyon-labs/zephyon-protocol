@@ -9,7 +9,8 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "prepare": "npm run build",
-    "test": "TS_NODE_TRANSPILE_ONLY=1 ts-mocha -p tsconfig.json -r ts-node/register -t 1000000 --exclude \"tests/_hold/**\" --exclude \"tests_legacy/**\" \"tests/**/*.spec.ts\""
+    "test": "TS_NODE_TRANSPILE_ONLY=1 ts-mocha -p tsconfig.json -r ts-node/register -t 1000000 --exclude \"tests/_hold/**\" --exclude \"tests_legacy/**\" \"tests/**/*.spec.ts\"",
+    "test:ci": "TS_NODE_TRANSPILE_ONLY=1 ts-mocha -p tsconfig.json -r ts-node/register -t 30000 tests/canonical_solana_execution.spec.ts tests/canonical_solana_rpc_transport.spec.ts tests/runtime_execution_contracts.spec.ts tests/runtime_execution_flow.spec.ts"
   },
   "devDependencies": {
     "@types/bn.js": "^5.2.0",

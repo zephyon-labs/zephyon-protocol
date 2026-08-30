@@ -1,0 +1,141 @@
+name: Protocol CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protocol-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22.23.2"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Validate package metadata
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const packageLock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const rootPackage = packageLock.packages?.[''];
+
+          if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) {
+            throw new Error('package.json must declare a non-empty version');
+          }
+          if (packageLock.version !== packageJson.version) {
+            throw new Error('package-lock.json top-level version does not match package.json');
+          }
+          if (!rootPackage || rootPackage.version !== packageJson.version) {
+            throw new Error('package-lock.json root package version does not match package.json');
+          }
+          NODE
+
+      - name: Validate release tag
+        run: |
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            exit 0
+          fi
+
+          package_version="$(node -p "require('./package.json').version")"
+          tag_name="${GITHUB_REF#refs/tags/}"
+          expected_tag="v${package_version}"
+
+          if [[ "$tag_name" != "$expected_tag" ]]; then
+            echo "Release tag must exactly match package version: ${expected_tag}" >&2
+            exit 1
+          fi
+
+          if [[ "$(git cat-file -t "$GITHUB_REF")" != "tag" ]]; then
+            echo "Release tag must be annotated" >&2
+            exit 1
+          fi
+
+          tag_target="$(git rev-parse "${GITHUB_REF}^{commit}")"
+          git rev-parse --verify "refs/remotes/origin/main^{commit}" >/dev/null
+          if ! git merge-base --is-ancestor "$tag_target" refs/remotes/origin/main; then
+            echo "Release tag target must be an ancestor of origin/main" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run focused CI tests
+        run: npm run test:ci
+
+      - name: Validate package exports and contents
+        run: |
+          test -s dist/index.js
+          test -s dist/index.d.ts
+          node -e "require('.')"
+
+          pack_report="$(mktemp)"
+          trap 'rm -f "$pack_report"' EXIT
+          npm pack --dry-run --json > "$pack_report"
+
+          node - "$pack_report" <<'NODE'
+          const fs = require('node:fs');
+
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (!Array.isArray(report) || report.length !== 1 || !Array.isArray(report[0].files)) {
+            throw new Error('npm pack did not return one machine-readable file list');
+          }
+
+          const files = report[0].files.map(({ path }) => path);
+          const required = [
+            'package.json',
+            'dist/index.js',
+            'dist/index.d.ts',
+            'docs/devnet-durable-submission-contract.md',
+          ];
+          for (const path of required) {
+            if (!files.includes(path)) {
+              throw new Error(`Required package file is missing: ${path}`);
+            }
+          }
+
+          const rootDocument = /^(?:README(?:\.md)?|LICEN[CS]E(?:[-.][A-Za-z0-9._-]+)?|CHANGELOG(?:\.md)?)$/i;
+          const allowed = (path) =>
+            !path.startsWith('/') &&
+            !path.split('/').includes('..') &&
+            (path === 'package.json' ||
+              path.startsWith('dist/') ||
+              path === 'docs/devnet-durable-submission-contract.md' ||
+              rootDocument.test(path));
+
+          const unexpected = files.filter((path) => !allowed(path));
+          if (unexpected.length > 0) {
+            throw new Error(`Unexpected package files: ${unexpected.join(', ')}`);
+          }
+
+          console.log(`Validated ${files.length} package files`);
+          NODE

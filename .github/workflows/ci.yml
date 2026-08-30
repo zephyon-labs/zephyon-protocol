@@ -113,6 +113,7 @@ jobs:
           const files = report[0].files.map(({ path }) => path);
           const required = [
             'package.json',
+            'README.md',
             'dist/index.js',
             'dist/index.d.ts',
             'docs/devnet-durable-submission-contract.md',
@@ -123,14 +124,87 @@ jobs:
             }
           }
 
-          const rootDocument = /^(?:README(?:\.md)?|LICEN[CS]E(?:[-.][A-Za-z0-9._-]+)?|CHANGELOG(?:\.md)?)$/i;
-          const allowed = (path) =>
-            !path.startsWith('/') &&
-            !path.split('/').includes('..') &&
-            (path === 'package.json' ||
-              path.startsWith('dist/') ||
-              path === 'docs/devnet-durable-submission-contract.md' ||
-              rootDocument.test(path));
+          const rootFiles = new Set([
+            'package.json',
+            'README.md',
+            'docs/devnet-durable-submission-contract.md',
+          ]);
+          const distSuffixes = ['.js', '.js.map', '.d.ts', '.d.ts.map'];
+          const unsafeSegment = (segment) =>
+            segment.length === 0 ||
+            segment === '.' ||
+            segment === '..' ||
+            segment.startsWith('.') ||
+            segment !== segment.trim() ||
+            /[\\\u0000-\u001f\u007f]/.test(segment);
+          const allowed = (path) => {
+            if (typeof path !== 'string' || path.startsWith('/') || path.includes('\\')) {
+              return false;
+            }
+            if (rootFiles.has(path)) {
+              return true;
+            }
+
+            const segments = path.split('/');
+            if (segments.length < 2 || segments[0] !== 'dist' || segments.some(unsafeSegment)) {
+              return false;
+            }
+
+            const filename = segments[segments.length - 1];
+            return distSuffixes.some((suffix) => filename.endsWith(suffix));
+          };
+
+          const positiveCases = [
+            'package.json',
+            'README.md',
+            'docs/devnet-durable-submission-contract.md',
+            'dist/index.js',
+            'dist/index.js.map',
+            'dist/index.d.ts',
+            'dist/index.d.ts.map',
+            'dist/subdir/module.js',
+            'dist/subdir/module.js.map',
+            'dist/subdir/module.d.ts',
+            'dist/subdir/module.d.ts.map',
+          ];
+          const negativeCases = [
+            '.env',
+            '.env.production',
+            'dist/.env',
+            'dist/.env.production',
+            'dist/keys/private-key.pem',
+            'dist/private.key',
+            'dist/config.json',
+            'dist/file.txt',
+            'dist/file.ts',
+            'dist/file.d.ts.txt',
+            'dist/../secret.js',
+            '../dist/index.js',
+            '/dist/index.js',
+            'src/index.js',
+            'tests/example.js',
+            'programs/example.js',
+            '.github/workflows/evil.yml',
+            'Anchor.toml',
+            'yarn.lock',
+            'package-lock.json',
+            'LICENSE.env',
+            'LICENSE-private-key.pem',
+            'CHANGELOG.md',
+            'README.secret',
+            'distillery/index.js',
+            'otherdist/index.js',
+          ];
+          for (const path of positiveCases) {
+            if (!allowed(path)) {
+              throw new Error(`Package allowlist rejected positive case: ${path}`);
+            }
+          }
+          for (const path of negativeCases) {
+            if (allowed(path)) {
+              throw new Error(`Package allowlist accepted negative case: ${path}`);
+            }
+          }
 
           const unexpected = files.filter((path) => !allowed(path));
           if (unexpected.length > 0) {

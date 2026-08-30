@@ -136,7 +136,7 @@ jobs:
             segment === '..' ||
             segment.startsWith('.') ||
             segment !== segment.trim() ||
-            /[\\\u0000-\u001f\u007f]/.test(segment);
+            /[\\\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(segment);
           const allowed = (path) => {
             if (typeof path !== 'string' || path.startsWith('/') || path.includes('\\')) {
               return false;
@@ -166,6 +166,8 @@ jobs:
             'dist/subdir/module.js.map',
             'dist/subdir/module.d.ts',
             'dist/subdir/module.d.ts.map',
+            'dist/é.js',
+            'dist/目录/module.d.ts.map',
           ];
           const negativeCases = [
             '.env',
@@ -195,6 +197,14 @@ jobs:
             'distillery/index.js',
             'otherdist/index.js',
           ];
+          const unicodeNegativeCases = [
+            ['U+0085', `dist/foo${String.fromCodePoint(0x0085)}bar.js`],
+            ['U+2028', `dist/foo${String.fromCodePoint(0x2028)}bar.js`],
+            ['U+2029', `dist/foo${String.fromCodePoint(0x2029)}bar.js`],
+            ['U+202E', `dist/foo${String.fromCodePoint(0x202e)}bar.js`],
+            ['U+200B', `dist/foo${String.fromCodePoint(0x200b)}bar.js`],
+            ['U+200D', `dist/foo${String.fromCodePoint(0x200d)}bar.js`],
+          ];
           for (const path of positiveCases) {
             if (!allowed(path)) {
               throw new Error(`Package allowlist rejected positive case: ${path}`);
@@ -203,6 +213,11 @@ jobs:
           for (const path of negativeCases) {
             if (allowed(path)) {
               throw new Error(`Package allowlist accepted negative case: ${path}`);
+            }
+          }
+          for (const [codePoint, path] of unicodeNegativeCases) {
+            if (allowed(path)) {
+              throw new Error(`Package allowlist accepted Unicode negative case ${codePoint}`);
             }
           }
 

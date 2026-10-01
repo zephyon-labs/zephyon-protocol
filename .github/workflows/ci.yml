@@ -89,6 +89,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Typecheck economic contract fixtures
+        run: npx tsc -p tsconfig.contract-tests.json
+
       - name: Run focused CI tests
         run: npm run test:ci
 
@@ -117,6 +120,7 @@ jobs:
             'dist/index.js',
             'dist/index.d.ts',
             'docs/devnet-durable-submission-contract.md',
+            'docs/asset-economic-intent-v1.md',
           ];
           for (const path of required) {
             if (!files.includes(path)) {
@@ -128,6 +132,7 @@ jobs:
             'package.json',
             'README.md',
             'docs/devnet-durable-submission-contract.md',
+            'docs/asset-economic-intent-v1.md',
           ]);
           const distSuffixes = ['.js', '.js.map', '.d.ts', '.d.ts.map'];
           const unsafeSegment = (segment) =>
@@ -158,6 +163,7 @@ jobs:
             'package.json',
             'README.md',
             'docs/devnet-durable-submission-contract.md',
+            'docs/asset-economic-intent-v1.md',
             'dist/index.js',
             'dist/index.js.map',
             'dist/index.d.ts',

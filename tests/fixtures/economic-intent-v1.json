@@ -1,0 +1,191 @@
+{
+  "description": "Offline only. Synthetic genesis, blockhash and dummy keys; NOT a qualified network or wallet.",
+  "dummySeedBytes": {
+    "user": 1,
+    "sponsor": 2,
+    "recipient": 3
+  },
+  "recentBlockhash": "EdmxWPmx2WH6WgFfTdu9xfkYf3k1g5wD1zccTVySEEh1",
+  "qualifiedAsset": {
+    "schema": "zephyon.asset/v1",
+    "network": {
+      "family": "solana",
+      "environment": "devnet",
+      "genesisHash": "51T5ZJJd816Xi3M3yf81j9AAXsRWJBNTmKystogP5jw9"
+    },
+    "decimals": 6,
+    "kind": "spl-token",
+    "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+  },
+  "envelope": {
+    "schema": "zephyon.economic-intent/v1",
+    "principal": {
+      "id": "account:alice"
+    },
+    "attempt": {
+      "intentId": "intent:one",
+      "intentVersion": "1",
+      "attemptId": "attempt:a",
+      "generation": "1",
+      "fenceToken": "fence:a"
+    },
+    "nonce": "abababababababababababababababababababababababababababababababab",
+    "createdAt": "2026-09-30T12:00:00.000Z",
+    "expiresAt": "2026-09-30T12:05:00.000Z",
+    "source": {
+      "mode": "external-wallet",
+      "signer": "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9",
+      "account": "H1AviagU5Y17z77v1F9qZPJ9kCbCsL4ewiZABNfGYoRs",
+      "bindingId": "source:one",
+      "bindingVersion": "1"
+    },
+    "recipient": {
+      "id": "recipient:bob",
+      "snapshotVersion": "1",
+      "beneficiaryId": "account:bob",
+      "destinationBindingId": "destination:one",
+      "destinationVersion": "1",
+      "verification": "verified",
+      "wallet": "GyGKxMyg1p9SsHfm15MkNUu1u9TN2JtTspcdmrtGUdse",
+      "account": "6ndWAgFxMAVLobD8WrdBj5w41GrDeJYiQX91nNSrwkZp"
+    },
+    "amount": {
+      "schema": "zephyon.amount/v1",
+      "asset": {
+        "schema": "zephyon.asset/v1",
+        "network": {
+          "family": "solana",
+          "environment": "devnet",
+          "genesisHash": "51T5ZJJd816Xi3M3yf81j9AAXsRWJBNTmKystogP5jw9"
+        },
+        "decimals": 6,
+        "kind": "spl-token",
+        "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+      },
+      "atomicUnits": "1234567"
+    },
+    "fee": {
+      "mode": "platform-sponsor",
+      "signer": "9hSR6S7WPtxmTojgo6GG3k4yDPecgJY292j7xrsUGWBu",
+      "keyVersion": "key-v1",
+      "asset": {
+        "schema": "zephyon.asset/v1",
+        "network": {
+          "family": "solana",
+          "environment": "devnet",
+          "genesisHash": "51T5ZJJd816Xi3M3yf81j9AAXsRWJBNTmKystogP5jw9"
+        },
+        "kind": "native",
+        "nativeId": "sol",
+        "decimals": 9
+      },
+      "maxBaseFee": "10000",
+      "maxPriorityFee": "2000",
+      "maxRent": "3000000",
+      "computeUnitLimit": 200000,
+      "microLamportsPerUnit": "10000",
+      "createDestinationAta": true
+    },
+    "purpose": {
+      "kind": "p2p",
+      "reference": "request:one"
+    },
+    "runtime": {
+      "decisionId": "decision:one",
+      "policyVersion": "policy-v1",
+      "evidenceDigest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "validFrom": "2026-09-30T12:00:00.000Z",
+      "validUntil": "2026-09-30T12:05:00.000Z",
+      "scope": "devnet-test-only"
+    }
+  },
+  "devnetEnvelope": {
+    "schema": "zephyon.economic-intent/v1",
+    "principal": {
+      "id": "account:alice"
+    },
+    "attempt": {
+      "intentId": "intent:one",
+      "intentVersion": "1",
+      "attemptId": "attempt:a",
+      "generation": "1",
+      "fenceToken": "fence:a"
+    },
+    "nonce": "abababababababababababababababababababababababababababababababab",
+    "createdAt": "2026-09-30T12:00:00.000Z",
+    "expiresAt": "2026-09-30T12:05:00.000Z",
+    "source": {
+      "mode": "devnet-server",
+      "signer": "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9",
+      "account": "H1AviagU5Y17z77v1F9qZPJ9kCbCsL4ewiZABNfGYoRs",
+      "bindingId": "source:one",
+      "bindingVersion": "1"
+    },
+    "recipient": {
+      "id": "recipient:bob",
+      "snapshotVersion": "1",
+      "beneficiaryId": "account:bob",
+      "destinationBindingId": "destination:one",
+      "destinationVersion": "1",
+      "verification": "devnet-unverified",
+      "wallet": "GyGKxMyg1p9SsHfm15MkNUu1u9TN2JtTspcdmrtGUdse",
+      "account": "6ndWAgFxMAVLobD8WrdBj5w41GrDeJYiQX91nNSrwkZp"
+    },
+    "amount": {
+      "schema": "zephyon.amount/v1",
+      "asset": {
+        "schema": "zephyon.asset/v1",
+        "network": {
+          "family": "solana",
+          "environment": "devnet",
+          "genesisHash": "51T5ZJJd816Xi3M3yf81j9AAXsRWJBNTmKystogP5jw9"
+        },
+        "decimals": 6,
+        "kind": "spl-token",
+        "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+      },
+      "atomicUnits": "1234567"
+    },
+    "fee": {
+      "mode": "devnet-server",
+      "signer": "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9",
+      "keyVersion": "key-v1",
+      "asset": {
+        "schema": "zephyon.asset/v1",
+        "network": {
+          "family": "solana",
+          "environment": "devnet",
+          "genesisHash": "51T5ZJJd816Xi3M3yf81j9AAXsRWJBNTmKystogP5jw9"
+        },
+        "kind": "native",
+        "nativeId": "sol",
+        "decimals": 9
+      },
+      "maxBaseFee": "10000",
+      "maxPriorityFee": "2000",
+      "maxRent": "3000000",
+      "computeUnitLimit": 200000,
+      "microLamportsPerUnit": "10000",
+      "createDestinationAta": true
+    },
+    "purpose": {
+      "kind": "p2p",
+      "reference": "request:one"
+    },
+    "runtime": {
+      "decisionId": "decision:one",
+      "policyVersion": "policy-v1",
+      "evidenceDigest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "validFrom": "2026-09-30T12:00:00.000Z",
+      "validUntil": "2026-09-30T12:05:00.000Z",
+      "scope": "devnet-test-only"
+    }
+  },
+  "envelopeCanonical": "{\"amount\":{\"asset\":{\"decimals\":6,\"kind\":\"spl-token\",\"mint\":\"4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU\",\"network\":{\"environment\":\"devnet\",\"family\":\"solana\",\"genesisHash\":\"51T5ZJJd816Xi3M3yf81j9AAXsRWJBNTmKystogP5jw9\"},\"schema\":\"zephyon.asset/v1\",\"tokenProgram\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\"},\"atomicUnits\":\"1234567\",\"schema\":\"zephyon.amount/v1\"},\"attempt\":{\"attemptId\":\"attempt:a\",\"fenceToken\":\"fence:a\",\"generation\":\"1\",\"intentId\":\"intent:one\",\"intentVersion\":\"1\"},\"createdAt\":\"2026-09-30T12:00:00.000Z\",\"expiresAt\":\"2026-09-30T12:05:00.000Z\",\"fee\":{\"asset\":{\"decimals\":9,\"kind\":\"native\",\"nativeId\":\"sol\",\"network\":{\"environment\":\"devnet\",\"family\":\"solana\",\"genesisHash\":\"51T5ZJJd816Xi3M3yf81j9AAXsRWJBNTmKystogP5jw9\"},\"schema\":\"zephyon.asset/v1\"},\"computeUnitLimit\":200000,\"createDestinationAta\":true,\"keyVersion\":\"key-v1\",\"maxBaseFee\":\"10000\",\"maxPriorityFee\":\"2000\",\"maxRent\":\"3000000\",\"microLamportsPerUnit\":\"10000\",\"mode\":\"platform-sponsor\",\"signer\":\"9hSR6S7WPtxmTojgo6GG3k4yDPecgJY292j7xrsUGWBu\"},\"nonce\":\"abababababababababababababababababababababababababababababababab\",\"principal\":{\"id\":\"account:alice\"},\"purpose\":{\"kind\":\"p2p\",\"reference\":\"request:one\"},\"recipient\":{\"account\":\"6ndWAgFxMAVLobD8WrdBj5w41GrDeJYiQX91nNSrwkZp\",\"beneficiaryId\":\"account:bob\",\"destinationBindingId\":\"destination:one\",\"destinationVersion\":\"1\",\"id\":\"recipient:bob\",\"snapshotVersion\":\"1\",\"verification\":\"verified\",\"wallet\":\"GyGKxMyg1p9SsHfm15MkNUu1u9TN2JtTspcdmrtGUdse\"},\"runtime\":{\"decisionId\":\"decision:one\",\"evidenceDigest\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"policyVersion\":\"policy-v1\",\"scope\":\"devnet-test-only\",\"validFrom\":\"2026-09-30T12:00:00.000Z\",\"validUntil\":\"2026-09-30T12:05:00.000Z\"},\"schema\":\"zephyon.economic-intent/v1\",\"source\":{\"account\":\"H1AviagU5Y17z77v1F9qZPJ9kCbCsL4ewiZABNfGYoRs\",\"bindingId\":\"source:one\",\"bindingVersion\":\"1\",\"mode\":\"external-wallet\",\"signer\":\"AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9\"}}",
+  "envelopeDigest": "78f980555ba57c6536e5bc31b91c6fe365f456cfdb26d08e487f262a3b8927c1",
+  "devnetEnvelopeCanonical": "{\"amount\":{\"asset\":{\"decimals\":6,\"kind\":\"spl-token\",\"mint\":\"4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU\",\"network\":{\"environment\":\"devnet\",\"family\":\"solana\",\"genesisHash\":\"51T5ZJJd816Xi3M3yf81j9AAXsRWJBNTmKystogP5jw9\"},\"schema\":\"zephyon.asset/v1\",\"tokenProgram\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\"},\"atomicUnits\":\"1234567\",\"schema\":\"zephyon.amount/v1\"},\"attempt\":{\"attemptId\":\"attempt:a\",\"fenceToken\":\"fence:a\",\"generation\":\"1\",\"intentId\":\"intent:one\",\"intentVersion\":\"1\"},\"createdAt\":\"2026-09-30T12:00:00.000Z\",\"expiresAt\":\"2026-09-30T12:05:00.000Z\",\"fee\":{\"asset\":{\"decimals\":9,\"kind\":\"native\",\"nativeId\":\"sol\",\"network\":{\"environment\":\"devnet\",\"family\":\"solana\",\"genesisHash\":\"51T5ZJJd816Xi3M3yf81j9AAXsRWJBNTmKystogP5jw9\"},\"schema\":\"zephyon.asset/v1\"},\"computeUnitLimit\":200000,\"createDestinationAta\":true,\"keyVersion\":\"key-v1\",\"maxBaseFee\":\"10000\",\"maxPriorityFee\":\"2000\",\"maxRent\":\"3000000\",\"microLamportsPerUnit\":\"10000\",\"mode\":\"devnet-server\",\"signer\":\"AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9\"},\"nonce\":\"abababababababababababababababababababababababababababababababab\",\"principal\":{\"id\":\"account:alice\"},\"purpose\":{\"kind\":\"p2p\",\"reference\":\"request:one\"},\"recipient\":{\"account\":\"6ndWAgFxMAVLobD8WrdBj5w41GrDeJYiQX91nNSrwkZp\",\"beneficiaryId\":\"account:bob\",\"destinationBindingId\":\"destination:one\",\"destinationVersion\":\"1\",\"id\":\"recipient:bob\",\"snapshotVersion\":\"1\",\"verification\":\"devnet-unverified\",\"wallet\":\"GyGKxMyg1p9SsHfm15MkNUu1u9TN2JtTspcdmrtGUdse\"},\"runtime\":{\"decisionId\":\"decision:one\",\"evidenceDigest\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"policyVersion\":\"policy-v1\",\"scope\":\"devnet-test-only\",\"validFrom\":\"2026-09-30T12:00:00.000Z\",\"validUntil\":\"2026-09-30T12:05:00.000Z\"},\"schema\":\"zephyon.economic-intent/v1\",\"source\":{\"account\":\"H1AviagU5Y17z77v1F9qZPJ9kCbCsL4ewiZABNfGYoRs\",\"bindingId\":\"source:one\",\"bindingVersion\":\"1\",\"mode\":\"devnet-server\",\"signer\":\"AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9\"}}",
+  "devnetEnvelopeDigest": "79bb1c40fa4bec008ad84d6dad2c9477ead35e27362536b2ea0284fdb38e770f"
+}

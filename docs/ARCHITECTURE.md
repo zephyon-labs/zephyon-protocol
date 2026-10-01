@@ -3,8 +3,8 @@
 Scope note: this document describes the historical treasury/Anchor design. The
 current TypeScript Devnet transfer lifecycle is documented in
 [the durable submission contract](devnet-durable-submission-contract.md). The
-[Mainnet P2P fund-authority ADR candidate](decisions/MAINNET_P2P_FUND_AUTHORITY_V1.md)
-proposes customer authority and recovery requirements for independent review; it
+[Mainnet P2P fund-authority ADR](decisions/MAINNET_P2P_FUND_AUTHORITY_V1.md)
+records the approved architecture direction for customer authority and recovery; it
 approves no implementation or Mainnet activation.
 
 ## High-Level Goal

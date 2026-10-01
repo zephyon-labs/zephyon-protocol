@@ -1,12 +1,13 @@
 # Mainnet P2P Fund Authority and Signer Architecture V1
 
-Status: PROPOSED FOR CANONICAL REVIEW. Architecture recommendation only.
+Status: CANONICAL ARCHITECTURE via protected PR #4; no activation authorization.
 Recorded: 2026-09-30. Owner: Protocol/Runtime architecture, with Backend and client consumers.
-Implementation authorization: NOT GRANTED. Real-funds activation: NOT GRANTED.
+Production-signing implementation authorization: NOT GRANTED. Real-funds activation: NOT GRANTED.
+The separately authorized Asset/Economic Intent V1 package is limited to additive offline contracts.
 
-This isolated documentation package selects a preferred design for review; it is
-not merged canonical policy, deployed functionality, provider qualification, or
-legal clearance. It changes no executable contract, SDK version, custody setup,
+The audited direction was merged at `82862e2b28c15e05d95026b391df82092ce89805`.
+The original architecture-only approval is not deployed functionality, provider
+qualification, legal clearance or production-signing permission. It changes no executable contract, SDK version, custody setup,
 secret, asset allowlist, payment route, or ZERA decision. The user requested this
 architecture review after ZERA Optional Economic Participation Architecture V1.
 
@@ -505,6 +506,11 @@ OAuth client secret or customer asset key is introduced by this design.
 
 ## 25. Android architecture
 
+P3-02 contract clarification: MWA 2.0 sign-only `solana:signTransactions` is
+optional/deprecated. Explicit wallet/version capability qualification is required;
+`signAndSend` support is insufficient and cannot be an automatic fallback.
+[MWA specification](https://solana-mobile.github.io/mobile-wallet-adapter/spec/spec.html#deprecated-features).
+
 Prefer a qualified MWA sign-only capability where supported; explicitly select
 network/account and inspect wallet capabilities/transaction versions. The reference
 documents both sign-only and sign-and-send operations; they must not be treated as
@@ -650,7 +656,7 @@ No repository deletion, UI migration or broad rewrite is part of this package.
 
 ## 35. Decision record and authority
 
-This document is the canonical ADR candidate for the reviewed repository state.
+This document records the canonical architecture direction for the reviewed repository state.
 Selected preferred direction: external user authority plus sponsor-last relay.
 Preserved alternative: separately qualified embedded user authority. Parked:
 platform customer custody, direct submission, user-paid-fee profile and broad
@@ -658,8 +664,8 @@ hybrid launch. Rejected for this profile: session-only spend authority, silently
 reusing the Devnet customer-funds model, callback-based success/failure, blind
 replacement, and a signature treated as Runtime approval.
 
-Independent architecture/security review and the protected repository workflow
-must ratify this candidate. Specialist-dependent decisions stay explicitly open.
+Independent review and protected PR #4 ratified this architecture direction.
+Specialist-dependent decisions stay explicitly open.
 No merge or review verdict would itself authorize real-funds implementation or
 activation. This task stops at architecture/specification work.
 
@@ -734,13 +740,17 @@ ATA/fee injection; account-recovery takeover; receipt mismatch and old-mode reco
 ## 40. Asset Identity package readiness
 
 **GO WITH PREREQUISITES** for a bounded architecture/schema package, not automatic
-permission to implement or activate it. First ratify this authority direction and
-agree that source authority, fee authority, partial-signature completeness and
+permission to implement or activate it. The direction is ratified by PR #4;
+consumer contracts must agree that source authority, fee authority, partial-signature completeness and
 possible-effect certainty are distinct contract fields. Pin the consumer/version
 migration plan and define exact envelope/message binding plus offline conformance
 cases. No wallet vendor or Mainnet custody account must be created to design that
 contract. Provider qualification, actual sponsor signing and real-funds activation
 remain later gates, not work silently pulled into asset-schema design.
+
+P3-01 contract follow-up: [Asset/Economic Intent V1](../asset-economic-intent-v1.md)
+defines server-generated finalization identity, immutable tuple, uniqueness,
+replay/conflict and recovery semantics. Operational signer qualification remains open.
 
 ## 41. Open decisions and reopening triggers
 
@@ -762,7 +772,7 @@ remain later gates, not work silently pulled into asset-schema design.
 
 ## 42. Recommended next step
 
-Independently review this ADR, focusing first on sponsor-finalization fencing,
+Independently review the follow-up implementation, focusing first on sponsor-finalization fencing,
 policy/consent binding and the distinction between wallet uncertainty and a released
 spending capability. Then authorize Asset Identity and Economic Intent Compatibility
 V1 as a narrow versioned contract/fixture package. Keep provider installation,

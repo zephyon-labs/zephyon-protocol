@@ -1,6 +1,6 @@
 {
   "name": "zephyon-protocol",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,7 +10,8 @@
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "prepare": "npm run build",
     "test": "TS_NODE_TRANSPILE_ONLY=1 ts-mocha -p tsconfig.json -r ts-node/register -t 1000000 --exclude \"tests/_hold/**\" --exclude \"tests_legacy/**\" \"tests/**/*.spec.ts\"",
-    "test:ci": "TS_NODE_TRANSPILE_ONLY=1 ts-mocha -p tsconfig.json -r ts-node/register -t 30000 tests/canonical_solana_execution.spec.ts tests/canonical_solana_rpc_transport.spec.ts tests/runtime_execution_contracts.spec.ts tests/runtime_execution_flow.spec.ts"
+    "test:ci": "TS_NODE_TRANSPILE_ONLY=1 ts-mocha -p tsconfig.json -r ts-node/register -t 30000 tests/canonical_solana_execution.spec.ts tests/canonical_solana_rpc_transport.spec.ts tests/runtime_execution_contracts.spec.ts tests/runtime_execution_flow.spec.ts tests/economic_intent_v1.spec.ts",
+    "test:contracts": "tsc -p tsconfig.contract-tests.json && TS_NODE_TRANSPILE_ONLY=1 ts-mocha -p tsconfig.json -r ts-node/register -t 30000 tests/economic_intent_v1.spec.ts"
   },
   "devDependencies": {
     "@types/bn.js": "^5.2.0",
@@ -41,7 +42,8 @@
   },
   "files": [
     "dist",
-    "docs/devnet-durable-submission-contract.md"
+    "docs/devnet-durable-submission-contract.md",
+    "docs/asset-economic-intent-v1.md"
   ],
   "engines": {
     "node": ">=18"

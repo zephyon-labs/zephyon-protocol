@@ -28,3 +28,5 @@ export * from "./infrastructure";
 export * from "./adapters";
 export * from "./execution";
 export * from "./resilience";
+
+export * from "./economic";

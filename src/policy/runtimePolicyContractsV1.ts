@@ -70,7 +70,8 @@ export type RuntimePolicyContextV1 = Readonly<{
   session?: Readonly<{ id: string; version: string }>;
 }>;
 
-export const runtimePolicyRejectionCodesV1 = [
+/** Immutable display/typing vocabulary. Never an input to policy decision truth or ordering. */
+export const runtimePolicyRejectionCodesV1 = Object.freeze([
   "POLICY_NOT_EFFECTIVE", "POLICY_EXPIRED", "ENVELOPE_NOT_EFFECTIVE", "ENVELOPE_EXPIRED",
   "POLICY_REFERENCE_MISMATCH", "CONTEXT_NETWORK_MISMATCH", "NETWORK_NOT_PERMITTED", "ASSET_NOT_PERMITTED",
   "AMOUNT_NOT_PERMITTED", "PURPOSE_NOT_PERMITTED", "SOURCE_NOT_PERMITTED", "DESTINATION_NOT_QUALIFIED",
@@ -79,7 +80,7 @@ export const runtimePolicyRejectionCodesV1 = [
   "EVIDENCE_RESOURCE_MISMATCH", "EVIDENCE_ENVELOPE_MISMATCH", "EVIDENCE_NOT_EFFECTIVE",
   "EVIDENCE_EXPIRED", "EVIDENCE_REVOKED", "EVIDENCE_NOT_SATISFIED", "CONSENT_BINDING_MISMATCH",
   "CONSENT_TIME_INVALID", "RECIPIENT_KIND_NOT_PERMITTED",
-] as const;
+] as const);
 export type RuntimePolicyRejectionCodeV1 = typeof runtimePolicyRejectionCodesV1[number];
 export type RuntimePolicyInputCodeV1 = "POLICY_INVALID" | "EVIDENCE_INVALID" | "EVIDENCE_QUALIFIER_REQUIRED" |
   "CONFIGURATION_INVALID" | "CONFIGURATION_MISMATCH" | "ENVELOPE_INVALID" | "CONTEXT_INVALID" |

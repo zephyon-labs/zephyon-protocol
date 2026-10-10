@@ -2,8 +2,21 @@ import { createAssetIdentityV1, createNetworkDomainV1, sameNetworkV1 } from "../
 import { authorizationBindingDigestV1, createEconomicIntentEnvelopeV1, type EconomicIntentEnvelopeV1, type RuntimeDecisionBindingV1 } from "../economic/economicIntent";
 import { canonicalJsonV1, digest, freeze, hex, id, object, time } from "../economic/validation";
 import { readRuntimeEvidenceSet, runtimeEvidenceAuthorityIdentity, type RuntimeEvidenceAuthorityV1, type RuntimeEvidenceSetV1 } from "./runtimeEvidenceV1";
-import { RuntimePolicyInputErrorV1, runtimePolicyRejectionCodesV1, type RuntimePolicyAuthorityV1, type RuntimePolicyContextV1, type RuntimePolicyDecisionV1, type RuntimePolicyProfileV1, type RuntimePolicyRejectionCodeV1 } from "./runtimePolicyContractsV1";
+import { RuntimePolicyInputErrorV1, type RuntimePolicyAuthorityV1, type RuntimePolicyContextV1, type RuntimePolicyDecisionV1, type RuntimePolicyProfileV1, type RuntimePolicyRejectionCodeV1 } from "./runtimePolicyContractsV1";
 import { check, createRuntimePolicyProfileV1, guarded, runtimePolicyProfileDigestV1 } from "./runtimePolicyValidationV1";
+
+// Private, exhaustive precedence: never read an exported metadata value, even at initialization.
+// Sort the actual failures; no display vocabulary can remove a predicate failure.
+const rejectionOrder: Readonly<Record<RuntimePolicyRejectionCodeV1, number>> = Object.freeze({
+  POLICY_NOT_EFFECTIVE: 0, POLICY_EXPIRED: 1, ENVELOPE_NOT_EFFECTIVE: 2, ENVELOPE_EXPIRED: 3,
+  POLICY_REFERENCE_MISMATCH: 4, CONTEXT_NETWORK_MISMATCH: 5, NETWORK_NOT_PERMITTED: 6, ASSET_NOT_PERMITTED: 7,
+  AMOUNT_NOT_PERMITTED: 8, PURPOSE_NOT_PERMITTED: 9, SOURCE_NOT_PERMITTED: 10, DESTINATION_NOT_QUALIFIED: 11,
+  EVIDENCE_UNTRUSTED: 12, EVIDENCE_UNEXPECTED: 13, EVIDENCE_MISSING: 14, EVIDENCE_SOURCE_MISMATCH: 15,
+  EVIDENCE_VERSION_MISMATCH: 16, EVIDENCE_NETWORK_MISMATCH: 17, EVIDENCE_SUBJECT_MISMATCH: 18,
+  EVIDENCE_RESOURCE_MISMATCH: 19, EVIDENCE_ENVELOPE_MISMATCH: 20, EVIDENCE_NOT_EFFECTIVE: 21,
+  EVIDENCE_EXPIRED: 22, EVIDENCE_REVOKED: 23, EVIDENCE_NOT_SATISFIED: 24, CONSENT_BINDING_MISMATCH: 25,
+  CONSENT_TIME_INVALID: 26, RECIPIENT_KIND_NOT_PERMITTED: 27,
+});
 
 /** Pure decision primitive. No clock reads, random IDs, transport, default services or execution. */
 export class RuntimePolicyEvaluatorV1 {
@@ -80,8 +93,9 @@ export class RuntimePolicyEvaluatorV1 {
         reject("RECIPIENT_KIND_NOT_PERMITTED", !p.recipientKinds.includes(v.fact.recipientKind));
       }
     }
-    const rejectionCodes = runtimePolicyRejectionCodesV1.filter(code => reasons.has(code));
-    return freeze({ schema: "zephyon.runtime-policy-decision/v1", decisionId: e.runtime.decisionId, status: rejectionCodes.length ? "REJECTED" : "APPROVED",
+    const status = reasons.size === 0 ? "APPROVED" : "REJECTED";
+    const rejectionCodes = [...reasons].sort((left, right) => rejectionOrder[left] - rejectionOrder[right]);
+    return freeze({ schema: "zephyon.runtime-policy-decision/v1", decisionId: e.runtime.decisionId, status,
       envelopeDigest, runtimeReference: e.runtime, policyId: p.policyId, policyVersion: p.policyVersion, profileDigest: a.expectedProfileDigest,
       configurationVersion: p.configurationVersion, configurationFingerprint: p.configurationFingerprint, evaluatorId: a.evaluatorId, evaluatorVersion: a.evaluatorVersion,
       evidenceAuthorityId: a.evidenceAuthorityId, evidenceSetDigest: digest("zephyon:runtime-evidence-set:v1", snapshot ?? { authorityId: a.evidenceAuthorityId, records: [], unqualified: true }),
@@ -95,6 +109,8 @@ export class RuntimePolicyEvaluatorV1 {
    * full decision and enforce its expiry, never widen it to runtimeReference.validUntil. */
   verifyDecision(decision: RuntimePolicyDecisionV1, envelope: EconomicIntentEnvelopeV1, evidenceSet: RuntimeEvidenceSetV1,
     originalContext: RuntimePolicyContextV1, now: string): RuntimeDecisionBindingV1 {
+    // Recompute authoritative predicates, independent of public metadata; exact equality also
+    // binds status, reasons, policy, envelope, evidence and the original validity window.
     const expected = this.evaluate(envelope, evidenceSet, originalContext);
     guarded("DECISION_BINDING_INVALID", () => check(expected.status === "APPROVED" && canonicalJsonV1(decision) === canonicalJsonV1(expected)));
     guarded("DECISION_NOT_CURRENT", () => { const at = time(now); check(at >= expected.issuedAt && at < expected.expiresAt); });

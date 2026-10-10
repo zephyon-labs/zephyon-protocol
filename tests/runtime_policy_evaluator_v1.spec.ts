@@ -56,6 +56,14 @@ async function evidenceError(raw: unknown, code = "EVIDENCE_INVALID") {
 }
 
 describe("Runtime policy evaluator V1", () => {
+  it("cannot clear rejection metadata through any and promote missing evidence", async () => {
+    const p = policy(), e = envelope(p), set = await trusted([]), r = new sdk.RuntimePolicyEvaluatorV1(p, authority(p), trustedAuthority);
+    const before = r.evaluate(e, set, context(e));
+    expect(before.status).equal("REJECTED"); expect(before.rejectionCodes).deep.equal(["EVIDENCE_MISSING"]);
+    expect(() => { (sdk.runtimePolicyRejectionCodesV1 as any).length = 0; }).throw(TypeError);
+    expect(r.evaluate(e, set, context(e))).deep.equal(before);
+    inputError(() => r.verifyDecision({ ...before, status: "APPROVED", rejectionCodes: [] }, e, set, context(e), now), "DECISION_BINDING_INVALID");
+  });
   it("approves exact qualified Devnet TEST evidence and returns the existing V0.4 binding", async () => {
     const p = policy(), e = envelope(p), rows = records(e, p), set = await trusted(rows), runtime = new sdk.RuntimePolicyEvaluatorV1(p, authority(p), trustedAuthority);
     const d = runtime.evaluate(e, set, context(e));

@@ -5,7 +5,8 @@
   },
   "include": [
     "src/**/*.ts",
-    "tests/economic_intent_v1.spec.ts"
+    "tests/economic_intent_v1.spec.ts",
+    "tests/runtime_policy_evaluator_v1.spec.ts"
   ],
   "exclude": [
     "node_modules",

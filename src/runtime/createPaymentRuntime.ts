@@ -24,6 +24,8 @@ import { InternalLedgerAdapter } from "../adapters";
 import { PaymentDecisionPipeline } from "./paymentDecisionPipeline";
 import { PaymentRuntime } from "./paymentRuntime";
 
+// TEST/SMOKE ONLY: these unconditional producers are compatibility fixtures, not
+// substantive identity, compliance, risk or policy evidence. Never used by V1.
 const approvingComplianceService: ComplianceService = {
   async evaluate() {
     return {
@@ -75,6 +77,8 @@ const approvingIdentityService: IdentityService = {
   },
 };
 
+/** TEST/SMOKE ONLY. Legacy auto-approving composition retained for compatibility.
+ * Use explicitly qualified RuntimePolicyEvaluatorV1 inputs for economic admission. */
 export function createPaymentRuntime(): PaymentRuntime {
   const registry = new InMemoryPaymentAdapterRegistry();
   registry.register(new InternalLedgerAdapter());

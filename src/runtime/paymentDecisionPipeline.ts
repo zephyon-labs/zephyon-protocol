@@ -15,6 +15,8 @@ export type PaymentDecisionPipelineConfig = {
   trustEngine?: TrustEngine;
 };
 
+/** Legacy aggregation: absent engines/evidence can yield approval. Not a fail-closed
+ * economic admission boundary; RuntimePolicyEvaluatorV1 never delegates here. */
 export class PaymentDecisionPipeline {
   constructor(private readonly config: PaymentDecisionPipelineConfig) {}
 
